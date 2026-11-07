@@ -22,17 +22,6 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 - **An independent window for every note.** Resize it, keep it above other windows, or close it for later.
 - **A familiar native editor.** Fonts, headings, images, and writing direction use macOS text-editing foundations.
 
-## Screenshots
-
-Real screenshots of the app supplied during development. These detail views show an **earlier build**: the current release has a color-matched title bar, color swatches in the picker, and additional image and column controls.
-
-### A compact writing toolbar
-
-![Sticky Notes writing toolbar on a green note](docs/images/note-toolbar.png)
-
-### Five note colors
-
-<img src="docs/images/note-colors.png" alt="The note color picker with Yellow, Rose, Sage, Sky, and Lavender" width="240" />
 
 ## Features
 
@@ -70,6 +59,13 @@ Real screenshots of the app supplied during development. These detail views show
 - Persistent defaults for new notes: font family, font size, color, and writing direction.
 - Color swatches beside color names.
 - Settings under **Sticky Notes → Settings…**, and note creation under **File → New Note**.
+
+## Download
+
+**[Download the latest macOS release](https://github.com/zianazari/sticky-notes/releases/latest)**
+
+Choose the Apple Silicon ZIP, unzip it, and drag **Sticky Notes.app** into Applications.
+The release includes SHA-256 checksums. This build is locally signed, not notarized by Apple.
 
 ## Get started
 
@@ -115,6 +111,15 @@ The script compiles the Swift sources, packages the icon and app bundle, writes 
 
 ## Technology
 
+<p align="left">
+  <img src="https://skillicons.dev/icons?i=swift,py,bash,git&theme=dark" alt="Swift, Python, shell scripting and Git" />
+</p>
+<p align="left">
+  <img src="https://img.shields.io/badge/AppKit-147EFB?style=for-the-badge&logo=apple&logoColor=white" alt="AppKit" />
+  <img src="https://img.shields.io/badge/TextKit-555555?style=for-the-badge&logo=apple&logoColor=white" alt="TextKit" />
+  <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
+</p>
+
 | Layer | Implementation |
 | --- | --- |
 | Language | **Swift**, compiled with the Swift 6 toolchain |
@@ -128,43 +133,4 @@ The script compiles the Swift sources, packages the icon and app bundle, writes 
 
 The app uses native macOS frameworks and has **no third-party runtime dependencies**. Two-column mode uses linked text containers, not tables or separate documents.
 
-## Storage and backups
 
-Notes are stored at:
-
-```text
-~/Library/Application Support/StickyNotes/notes.json
-```
-
-Each note stores its identity, title, color, modification time, per-note floating setting, column mode, and embedded rich-text data. App-wide preferences are stored separately through `UserDefaults`.
-
-To back up your notes, quit the app and copy `notes.json` somewhere safe. To restore, quit the app before replacing that file. This file includes the note content and embedded images; it is not an encrypted backup.
-
-There is currently **no cloud sync, export interface, or trash/recovery feature**. Deletion is permanent after confirmation. The bullet button inserts a bullet at the start of a paragraph; it does not automatically continue a list. Opacity applies to the entire note window, including its text and controls.
-
-## Project layout
-
-```text
-Sticky_Notes/
-├── Sources/StickyNotes/main.swift   # App, windows, editor, persistence, and layout
-├── Assets/                         # App icon and its design source notes
-├── docs/images/                    # README screenshots
-├── scripts/
-│   ├── build.sh                    # Build and package the macOS app
-│   ├── package-icon.py             # Assemble the ICNS representations
-│   ├── set-app-icon.swift          # Apply the custom Finder icon
-│   └── version.py                  # Content-based version increments
-├── Package.swift                   # Swift package declaration
-├── version.json                    # Version, build number, and input fingerprint
-└── README.md
-```
-
-## Versioning and validation
-
-`version.json` is the version source of truth. A successful build with changed Swift sources, assets, package metadata, or build scripts advances the patch version and build number. Rebuilding unchanged inputs keeps the same version. README-only changes do not increment the app version.
-
-The version is visible in **My Notes**, **Settings**, and **About Sticky Notes**. Use `scripts/build.sh` for a complete app bundle; a standalone Swift executable does not include the bundle resources or version metadata.
-
-Development checks have exercised legacy-note decoding, independent per-note floating settings, image selection/deletion, image resizing and RTFD persistence, continuous two-column flow, typing in an empty second column, and conversion back to a single column. Full interactive regression testing across supported macOS versions is still pending.
-
-The build verifies its signature before applying the custom Finder icon and performs normal verification afterward. Finder icon metadata is intentional: strict signature checks after that cosmetic customization may reject it. Copy the app with Finder to preserve the custom icon metadata.
