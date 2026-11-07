@@ -14,6 +14,30 @@ A native macOS app with colorful notes, rich text, images, and a quiet place to 
 
 </div>
 
+## Technology
+
+<p align="left">
+  <img src="https://skillicons.dev/icons?i=swift,py,bash,git&theme=dark" alt="Swift, Python, shell scripting and Git" />
+</p>
+<p align="left">
+  <img src="https://img.shields.io/badge/AppKit-147EFB?style=for-the-badge&logo=apple&logoColor=white" alt="AppKit" />
+  <img src="https://img.shields.io/badge/TextKit-555555?style=for-the-badge&logo=apple&logoColor=white" alt="TextKit" />
+  <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
+</p>
+
+| Layer | Implementation |
+| --- | --- |
+| Language | **Swift**, compiled with the Swift 6 toolchain |
+| Native interface | **AppKit** — `NSWindow`, `NSTableView`, `NSStackView`, and native menus |
+| Text editing | **TextKit 1** — `NSTextView`, `NSTextStorage`, `NSLayoutManager`, and linked `NSTextContainer` objects |
+| Rich content | **RTFD** for attributed text and embedded image attachments |
+| Note storage | **Foundation Codable + JSON**, written atomically to disk |
+| Preferences | **UserDefaults** |
+| Image import | **AppKit + UniformTypeIdentifiers** |
+| Packaging | **zsh**, `swiftc`, small **Python 3** helpers, `sips`, and `codesign` |
+
+The app uses native macOS frameworks and has **no third-party runtime dependencies**. Two-column mode uses linked text containers, not tables or separate documents.
+
 ## At a glance
 
 Create a note, give it a color, and start writing. Edits save automatically. Closing a note keeps it in **My Notes**, ready to open again with a double-click.
@@ -22,6 +46,20 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 - **An independent window for every note.** Resize it, keep it above other windows, or close it for later.
 - **A familiar native editor.** Fonts, headings, images, and writing direction use macOS text-editing foundations.
 
+
+## Screenshots
+
+### Two columns, images, and a color for every idea
+
+<p align="center">
+  <img src="docs/images/two-column-note.png" alt="Sticky Notes 1.0.12: a sage note with two text columns, embedded images, and the color picker open" width="588" />
+</p>
+
+### Your notes, always within reach
+
+<p align="center">
+  <img src="docs/images/my-notes-and-floating-note.png" alt="My Notes library with colorful saved notes and a translucent yellow shopping note with Keep note above enabled" width="767" />
+</p>
 
 ## Features
 
@@ -108,29 +146,3 @@ The script compiles the Swift sources, packages the icon and app bundle, writes 
 | Select all | `⌘A` |
 | Quit | `⌘Q` |
 | Delete a selected image | `Delete` |
-
-## Technology
-
-<p align="left">
-  <img src="https://skillicons.dev/icons?i=swift,py,bash,git&theme=dark" alt="Swift, Python, shell scripting and Git" />
-</p>
-<p align="left">
-  <img src="https://img.shields.io/badge/AppKit-147EFB?style=for-the-badge&logo=apple&logoColor=white" alt="AppKit" />
-  <img src="https://img.shields.io/badge/TextKit-555555?style=for-the-badge&logo=apple&logoColor=white" alt="TextKit" />
-  <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
-</p>
-
-| Layer | Implementation |
-| --- | --- |
-| Language | **Swift**, compiled with the Swift 6 toolchain |
-| Native interface | **AppKit** — `NSWindow`, `NSTableView`, `NSStackView`, and native menus |
-| Text editing | **TextKit 1** — `NSTextView`, `NSTextStorage`, `NSLayoutManager`, and linked `NSTextContainer` objects |
-| Rich content | **RTFD** for attributed text and embedded image attachments |
-| Note storage | **Foundation Codable + JSON**, written atomically to disk |
-| Preferences | **UserDefaults** |
-| Image import | **AppKit + UniformTypeIdentifiers** |
-| Packaging | **zsh**, `swiftc`, small **Python 3** helpers, `sips`, and `codesign` |
-
-The app uses native macOS frameworks and has **no third-party runtime dependencies**. Two-column mode uses linked text containers, not tables or separate documents.
-
-
