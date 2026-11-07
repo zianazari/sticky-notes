@@ -1,0 +1,6 @@
+Generated with the built-in image generation tool.
+
+Use case: stylized-concept. Create a polished macOS application icon for Sticky Notes: three overlapping square sticky paper notes, yellow front, coral pink middle, sky blue back, gently rotated into a compact fan. Subtle folded lower-right corner on front yellow sheet, refined soft dimensional shadows and softly rounded corners. Bold simple silhouette readable at small Dock sizes. Centered square composition, generous 10 percent transparent padding. No text, no letters, no pencil, no surrounding tile, no watermark. Actual transparent background. Save project asset.
+
+Revision 2 — built-in image tool, edit:
+Preserve the same three overlapping blue, pink, yellow sticky notes and curled yellow corner. Remove all background layers, base platform and outer drop shadow. Outside the paper silhouettes must be transparent alpha. Enlarge stack to fill 94% of square canvas with 3% clear margin, centered, no clipping. Keep shading only on and between papers. No text.
