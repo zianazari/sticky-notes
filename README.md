@@ -94,6 +94,7 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 ### Rich text, without a separate document app
 
 - Native font picker, **bold**, underline, and bullet insertion.
+- Press **Enter** in a bulleted item to continue the list automatically; press **Enter** on an empty item to end it.
 - **Text, H1, H2, and H3** styles.
 - Left and right alignment, plus left-to-right and right-to-left writing.
 - **One or two continuous text columns** sharing the same document.

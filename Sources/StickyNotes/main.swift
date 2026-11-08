@@ -119,6 +119,61 @@ final class NoteTextView: NSTextView {
         super.viewDidChangeEffectiveAppearance()
         appearanceDidChange?()
     }
+    var didBecomeActive: ((NoteTextView) -> Void)?
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { didBecomeActive?(self) }
+        return accepted
+    }
+    // Foundation paragraph ranges include form-feed column breaks. List commands
+    // must treat those breaks as boundaries without replacing the column break.
+    func listParagraphRange(at location: Int) -> NSRange {
+        let text = string as NSString
+        var start = 0, end = 0, contentsEnd = 0
+        text.getParagraphStart(&start, end: &end, contentsEnd: &contentsEnd,
+                               for: NSRange(location: location, length: 0))
+        let previousBreak = text.range(of: "\u{000c}", options: .backwards,
+                                      range: NSRange(location: start, length: location - start))
+        if previousBreak.location != NSNotFound { start = NSMaxRange(previousBreak) }
+        let nextBreak = text.range(of: "\u{000c}", options: [],
+                                  range: NSRange(location: location, length: contentsEnd - location))
+        if nextBreak.location != NSNotFound { contentsEnd = nextBreak.location }
+        return NSRange(location: start, length: contentsEnd - start)
+    }
+    func insertBullet() {
+        guard isEditable, !hasMarkedText() else { return }
+        let selection = selectedRange()
+        guard selection.location != NSNotFound, NSMaxRange(selection) <= (string as NSString).length else { return }
+        let paragraph = listParagraphRange(at: selection.location)
+        breakUndoCoalescing()
+        insertText("• ", replacementRange: NSRange(location: paragraph.location, length: 0))
+        setSelectedRange(NSRange(location: selection.location + 2, length: selection.length))
+        breakUndoCoalescing()
+    }
+    override func insertNewline(_ sender: Any?) {
+        guard isEditable, !hasMarkedText() else { super.insertNewline(sender); return }
+        let text = string as NSString
+        let selection = selectedRange()
+        guard selection.location != NSNotFound, NSMaxRange(selection) <= text.length else { return }
+        let paragraphRange = listParagraphRange(at: selection.location)
+        let start = paragraphRange.location, contentsEnd = NSMaxRange(paragraphRange)
+        let paragraph = text.substring(with: paragraphRange) as NSString
+        let prefixRange = paragraph.range(of: "^[\\t ]*•[\\t ]*", options: .regularExpression)
+        guard prefixRange.location == 0,
+              selection.location >= start + prefixRange.length,
+              NSMaxRange(selection) <= contentsEnd else { super.insertNewline(sender); return }
+        let prefix = paragraph.substring(with: prefixRange)
+        let content = paragraph.substring(from: prefixRange.length)
+        breakUndoCoalescing()
+        if content.trimmingCharacters(in: .whitespaces).isEmpty {
+            // An empty item ends the list without leaving a stray bullet behind.
+            insertText("", replacementRange: NSRange(location: start, length: contentsEnd - start))
+        } else {
+            // A single editor operation preserves typing style, undo, and autosave.
+            insertText("\n" + prefix, replacementRange: selection)
+        }
+        breakUndoCoalescing()
+    }
     var prepareEmptyColumn: (() -> Bool)?
     var resizeOrigin: NSRect?
     var resizePreview: NSRect?
@@ -346,8 +401,11 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     let id: UUID
     let primaryEditor = NoteTextView()
     lazy var flow = FlowDocument(primary: primaryEditor)
+    private weak var lastActiveEditor: NoteTextView?
     var editor: NoteTextView {
-        if let active = window?.firstResponder as? NoteTextView, active === flow.secondary { return active }
+        if let active = window?.firstResponder as? NoteTextView,
+           active === primaryEditor || active === flow.secondary { return active }
+        if let lastActiveEditor, !lastActiveEditor.isHidden { return lastActiveEditor }
         return primaryEditor
     }
     let noteScroll = NSScrollView()
@@ -370,6 +428,9 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         flow.columns = note.columnCount == 2 ? 2 : 1
         scroll.documentView = flow
         primaryEditor.delegate = self; flow.secondary.delegate = self
+        for textView in [primaryEditor, flow.secondary] {
+            textView.didBecomeActive = { [weak self] active in self?.lastActiveEditor = active }
+        }
         populateColors(colors); colors.selectItem(at: note.color); colors.target = self; colors.action = #selector(changeColor)
         let heading = NSPopUpButton(); heading.addItems(withTitles: ["Text", "H1", "H2", "H3"]); heading.target = self; heading.action = #selector(headingChanged(_:))
         let controls = row([heading, button("Font", self, #selector(fontPanel)), button("B", self, #selector(bold)), button("U", self, #selector(underline)), button("•", self, #selector(bullet)), button("←", self, #selector(left)), button("→", self, #selector(right))])
@@ -477,7 +538,11 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     @objc func underline() { editor.underline(self); persist() }
     @objc func left() { editor.alignLeft(self); editor.makeBaseWritingDirectionLeftToRight(self); persist() }
     @objc func right() { editor.alignRight(self); editor.makeBaseWritingDirectionRightToLeft(self); persist() }
-    @objc func bullet() { editor.insertText("• ", replacementRange: NSRange(location: (editor.string as NSString).paragraphRange(for: editor.selectedRange()).location, length: 0)) }
+    @objc func bullet() {
+        let active = editor
+        window?.makeFirstResponder(active)
+        active.insertBullet()
+    }
     @objc func headingChanged(_ sender: NSPopUpButton) {
         let size: CGFloat = [UserDefaults.standard.double(forKey: "size"), 30, 24, 20][sender.indexOfSelectedItem]
         let font = sender.indexOfSelectedItem == 0 ? NSFont.systemFont(ofSize: size) : NSFont.boldSystemFont(ofSize: size)
