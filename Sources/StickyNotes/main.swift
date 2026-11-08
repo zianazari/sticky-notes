@@ -5,6 +5,16 @@ struct Note: Codable {
     var id = UUID()
     var title = "Untitled note"
     var richText = Data()
+    var isEmpty: Bool {
+        if richText.isEmpty { return title == "Untitled note" || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard let content = NSAttributedString(rtfd: richText, documentAttributes: nil) ?? NSAttributedString(rtf: richText, documentAttributes: nil) else { return false }
+        var hasAttachment = false
+        content.enumerateAttribute(.attachment, in: NSRange(location: 0, length: content.length)) { value, _, stop in
+            if value != nil { hasAttachment = true; stop.pointee = true }
+        }
+        return !hasAttachment && content.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    var groupID: UUID? = nil
     var color = 0
     var modified = Date()
     var columnCount: Int? = nil
@@ -30,23 +40,66 @@ func populateColors(_ popup: NSPopUpButton) {
 }
 let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
 
+struct NoteGroup: Codable, Equatable {
+    var id = UUID()
+    var name: String
+}
+
 final class Store {
     static let shared = Store()
-    let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("StickyNotes/notes.json")
+    let url: URL
+    var groupsURL: URL { url.deletingLastPathComponent().appendingPathComponent("groups.json") }
     var notes: [Note] = []
-    init() {
-        if FileManager.default.fileExists(atPath: url.path) {
-            do { notes = try JSONDecoder().decode([Note].self, from: Data(contentsOf: url)) }
-            catch { fatalError("Cannot read saved notes; original file preserved: \(error)") }
-        }
+    var groups: [NoteGroup] = []
+    init(url: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("StickyNotes/notes.json")) {
+        self.url = url
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                notes = try JSONDecoder().decode([Note].self, from: Data(contentsOf: url))
+            }
+            if FileManager.default.fileExists(atPath: groupsURL.path) {
+                groups = try JSONDecoder().decode([NoteGroup].self, from: Data(contentsOf: groupsURL))
+            }
+        } catch { fatalError("Cannot read saved notes or groups; original files preserved: \(error)") }
+    }
+    func resolvedGroupID(for note: Note) -> UUID? {
+        guard let id = note.groupID, groups.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
+    func validName(_ name: String, excluding id: UUID? = nil) -> String? {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean.count <= 80,
+              !groups.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(clean) == .orderedSame }) else { return nil }
+        return clean
+    }
+    @discardableResult func createGroup(name: String) -> NoteGroup? {
+        guard let name = validName(name) else { return nil }
+        let group = NoteGroup(name: name); groups.append(group); return group
+    }
+    @discardableResult func renameGroup(id: UUID, name: String) -> Bool {
+        guard let name = validName(name, excluding: id), let i = groups.firstIndex(where: { $0.id == id }) else { return false }
+        groups[i].name = name; return true
+    }
+    func removeGroup(id: UUID) {
+        // Group deletion never deletes note content. Orphaned IDs also display as Ungrouped.
+        groups.removeAll { $0.id == id }
+        for index in notes.indices where notes[index].groupID == id { notes[index].groupID = nil }
+    }
+    @discardableResult func moveNote(id: UUID, to groupID: UUID?) -> Bool {
+        guard let i = notes.firstIndex(where: { $0.id == id }),
+              groupID == nil || groups.contains(where: { $0.id == groupID }) else { return false }
+        notes[i].groupID = groupID; return true
+    }
+    func write() throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Keep the existing note-array format so prior notes need no destructive migration.
+        // If the second write fails, removed IDs resolve to Ungrouped on reopening.
+        try JSONEncoder().encode(groups).write(to: groupsURL, options: .atomic)
+        try JSONEncoder().encode(notes).write(to: url, options: .atomic)
     }
     func save() {
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(notes).write(to: url, options: .atomic)
-        } catch {
-            let alert = NSAlert(); alert.messageText = "Could not save notes"; alert.informativeText = error.localizedDescription; alert.runModal()
-        }
+        do { try write() }
+        catch { let alert = NSAlert(); alert.messageText = "Could not save notes"; alert.informativeText = error.localizedDescription; alert.runModal() }
     }
 }
 func button(_ title: String, _ target: AnyObject, _ action: Selector) -> NSButton {
@@ -55,12 +108,17 @@ func button(_ title: String, _ target: AnyObject, _ action: Selector) -> NSButto
 func row(_ views: [NSView]) -> NSStackView {
     let s = NSStackView(views: views); s.orientation = .horizontal; s.spacing = 8; return s
 }
-func layout(_ stack: NSStackView, in view: NSView) {
+func layout(_ stack: NSStackView, in view: NSView, topInset: CGFloat = 16) {
     stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
-    NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16), stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16), stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 16), stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -16)])
+    NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16), stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16), stack.topAnchor.constraint(equalTo: view.topAnchor, constant: topInset), stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -16)])
 }
 // Text attachments use the same selection and undo-aware deletion as ordinary text.
 final class NoteTextView: NSTextView {
+    var appearanceDidChange: (() -> Void)?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        appearanceDidChange?()
+    }
     var prepareEmptyColumn: (() -> Bool)?
     var resizeOrigin: NSRect?
     var resizePreview: NSRect?
@@ -348,14 +406,14 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         if current.width < minimum.width || current.height < minimum.height {
             w.setContentSize(NSSize(width: max(current.width, minimum.width), height: max(current.height, minimum.height)))
         }
+        primaryEditor.appearanceDidChange = { [weak self] in self?.paint() }
         applyPreferences(); paint(); refreshFlow()
     }
     required init?(coder: NSCoder) { fatalError() }
     func applyPreferences() { window?.level = keepAboveToggle.state == .on ? .floating : .normal; window?.alphaValue = UserDefaults.standard.double(forKey: "opacity"); paint() }
     func paint() {
-        let dark = UserDefaults.standard.bool(forKey: "dark")
+        let dark = primaryEditor.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let c = dark ? NSColor(calibratedWhite: 0.18, alpha: 1) : palette[colors.indexOfSelectedItem]
-        window?.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window?.backgroundColor = c
         for view in [primaryEditor, flow.secondary] { view.backgroundColor = c; view.textColor = dark ? .white : .black }
     }
@@ -439,13 +497,11 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     }
     func windowWillClose(_ notification: Notification) { persist() }
 }
-final class App: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class App: NSObject, NSApplicationDelegate {
     static let shared = App()
     var windows: [UUID: NoteWindow] = [:]
     var library: NSWindow!
-    let table = NSTableView()
-    var visibleNotes: [Note] { Store.shared.notes }
-    let darkToggle = NSButton(checkboxWithTitle: "Dark appearance", target: nil, action: nil)
+    var libraryController: LibraryController!
     var settings: NSWindow?
     let rtlToggle = NSButton(checkboxWithTitle: "Right-to-left for new notes", target: nil, action: nil)
     let opacity = NSSlider(value: 1, minValue: 0.25, maxValue: 1, target: nil, action: nil)
@@ -474,60 +530,47 @@ final class App: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTable
         let editItem = NSMenuItem(); menu.addItem(editItem); let edit = NSMenu(title: "Edit"); editItem.submenu = edit
         for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key) }
         NSApp.mainMenu = menu
-        library = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false); library.isReleasedWhenClosed = false; library.title = "Sticky Notes — \(appVersion)"; library.center()
-        let title = NSTextField(labelWithString: "My Notes"); title.font = .boldSystemFont(ofSize: 28)
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("note")); table.headerView = nil; table.selectionHighlightStyle = .none; column.width = 560; table.addTableColumn(column); table.rowHeight = 76; table.intercellSpacing = NSSize(width: 0, height: 8); table.delegate = self; table.dataSource = self; table.target = self; table.action = nil; table.doubleAction = #selector(openSelected)
-        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true
-        let stack = NSStackView(views: [title, row([button("+ New note", self, #selector(newNote)), button("Delete", self, #selector(deleteSelected))]), scroll]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16; layout(stack, in: library.contentView!); scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        library.appearance = NSAppearance(named: UserDefaults.standard.bool(forKey: "dark") ? .darkAqua : .aqua)
+        library = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        library.isReleasedWhenClosed = false; library.title = ""; library.titleVisibility = .hidden
+        library.titlebarAppearsTransparent = true; library.titlebarSeparatorStyle = .none
+        library.minSize = NSSize(width: 720, height: 420)
+        libraryController = LibraryController()
+        library.contentViewController = libraryController
+        library.center(); library.setFrameAutosaveName("MyNotesLibrary")
+        library.appearance = nil
         showLibrary(); NSApp.activate(ignoringOtherApps: true)
     }
-    @objc func showLibrary() { library.makeKeyAndOrderFront(nil); reload() }
-    func reload() { table.reloadData() }
-    func numberOfRows(in tableView: NSTableView) -> Int { visibleNotes.count }
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let n = visibleNotes[row]
-        let card = NSView(); card.wantsLayer = true; card.layer?.cornerRadius = 8
-        card.layer?.borderWidth = tableView.isRowSelected(row) ? 2 : 0
-        card.layer?.borderColor = NSColor.controlAccentColor.cgColor
-        card.layer?.backgroundColor = (UserDefaults.standard.bool(forKey: "dark") ? palette[n.color].blended(withFraction: 0.8, of: .black)! : palette[n.color]).cgColor
-        let label = NSTextField(labelWithString: "\(n.title)\n\(n.modified.formatted(date: .abbreviated, time: .shortened))")
-        label.font = .systemFont(ofSize: 14); label.textColor = UserDefaults.standard.bool(forKey: "dark") ? .white : .black; label.maximumNumberOfLines = 2
-        label.translatesAutoresizingMaskIntoConstraints = false; card.addSubview(label)
-        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14), label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14), label.centerYAnchor.constraint(equalTo: card.centerYAnchor)])
-        return card
-    }
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        for index in 0..<table.numberOfRows {
-            if let card = table.view(atColumn: 0, row: index, makeIfNecessary: false) {
-                card.layer?.borderWidth = table.isRowSelected(index) ? 2 : 0
-                card.layer?.borderColor = NSColor.controlAccentColor.cgColor
-            }
-        }
-    }
+    @objc func showLibrary() { libraryController?.selectAllNotes(); library.makeKeyAndOrderFront(nil); reload() }
+    func reload() { libraryController?.reload() }
     func open(_ n: Note) { if windows[n.id] == nil { windows[n.id] = NoteWindow(note: n) }; windows[n.id]?.showWindow(nil); windows[n.id]?.window?.makeKeyAndOrderFront(nil) }
-    @objc func newNote() { var n = Note(); n.color = UserDefaults.standard.integer(forKey: "color"); Store.shared.notes.insert(n, at: 0); Store.shared.save(); reload(); open(n) }
-    @objc func openSelected() { guard table.selectedRow >= 0 else { return }; open(visibleNotes[table.selectedRow]) }
+    @objc func newNote() { var n = Note(); n.color = UserDefaults.standard.integer(forKey: "color"); n.groupID = libraryController?.currentGroupID; Store.shared.notes.insert(n, at: 0); Store.shared.save(); reload(); open(n) }
     @objc func deleteSelected() {
-        guard table.selectedRow >= 0 else { return }; let n = visibleNotes[table.selectedRow]
-        let alert = NSAlert(); alert.messageText = "Delete this note?"; alert.informativeText = n.title; alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Delete")
-        if alert.runModal() == .alertSecondButtonReturn { windows[n.id]?.close(); windows.removeValue(forKey: n.id); Store.shared.notes.removeAll { $0.id == n.id }; Store.shared.save(); reload() }
+        guard let id = libraryController?.selectedNote?.id else { return }
+        deleteNote(id: id)
+    }
+    func deleteNote(id: UUID) {
+        guard let note = Store.shared.notes.first(where: { $0.id == id }) else { return }
+        if !note.isEmpty {
+            let alert = NSAlert(); alert.messageText = "Delete this note?"; alert.informativeText = note.title; alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Delete")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
+        windows[id]?.close(); windows.removeValue(forKey: id)
+        Store.shared.notes.removeAll { $0.id == id }; Store.shared.save(); reload()
     }
     @objc func showSettings() {
         if let settings { settings.makeKeyAndOrderFront(nil); return }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 450, height: 360), styleMask: [.titled, .closable], backing: .buffered, defer: false); w.title = "Settings"; w.isReleasedWhenClosed = false; w.center(); settings = w
         let d = UserDefaults.standard
-        darkToggle.state = d.bool(forKey: "dark") ? .on : .off
         rtlToggle.state = d.bool(forKey: "rtl") ? .on : .off
         font.addItems(withTitles: NSFontManager.shared.availableFontFamilies.sorted()); font.selectItem(withTitle: d.string(forKey: "font")!)
         size.addItems(withTitles: ["12", "14", "17", "20", "24", "28"]); size.selectItem(withTitle: String(Int(d.double(forKey: "size"))))
         populateColors(color); color.selectItem(at: d.integer(forKey: "color")); opacity.doubleValue = d.double(forKey: "opacity")
-        for control: NSControl in [darkToggle, rtlToggle, font, size, color, opacity] { control.target = self; control.action = #selector(saveSettings) }
+        for control: NSControl in [rtlToggle, font, size, color, opacity] { control.target = self; control.action = #selector(saveSettings) }
         let hint = NSTextField(wrappingLabelWithString: "Version \(appVersion)\n\nFont, direction and color apply to new notes. Opacity applies to all open notes. Keep note above is set separately on each note. Changes are saved automatically.")
-        let stack = NSStackView(views: [darkToggle, row([NSTextField(labelWithString: "Opacity"), opacity, opacityLabel]), row([NSTextField(labelWithString: "Font"), font, size]), row([NSTextField(labelWithString: "New note color"), color]), rtlToggle, hint]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18; layout(stack, in: w.contentView!); saveSettings(); w.makeKeyAndOrderFront(nil)
+        let stack = NSStackView(views: [NSTextField(labelWithString: "Appearance follows macOS settings."), row([NSTextField(labelWithString: "Opacity"), opacity, opacityLabel]), row([NSTextField(labelWithString: "Font"), font, size]), row([NSTextField(labelWithString: "New note color"), color]), rtlToggle, hint]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18; layout(stack, in: w.contentView!); saveSettings(); w.makeKeyAndOrderFront(nil)
     }
     @objc func saveSettings() {
-        let d = UserDefaults.standard; d.set(darkToggle.state == .on, forKey: "dark"); library.appearance = NSAppearance(named: darkToggle.state == .on ? .darkAqua : .aqua); reload(); d.set(rtlToggle.state == .on, forKey: "rtl"); d.set(opacity.doubleValue, forKey: "opacity"); d.set(font.titleOfSelectedItem, forKey: "font"); d.set(Double(size.titleOfSelectedItem ?? "17")!, forKey: "size"); d.set(color.indexOfSelectedItem, forKey: "color"); opacityLabel.stringValue = "\(Int(opacity.doubleValue * 100))%"; windows.values.forEach { $0.applyPreferences() }
+        let d = UserDefaults.standard; d.set(rtlToggle.state == .on, forKey: "rtl"); d.set(opacity.doubleValue, forKey: "opacity"); d.set(font.titleOfSelectedItem, forKey: "font"); d.set(Double(size.titleOfSelectedItem ?? "17")!, forKey: "size"); d.set(color.indexOfSelectedItem, forKey: "color"); opacityLabel.stringValue = "\(Int(opacity.doubleValue * 100))%"; windows.values.forEach { $0.applyPreferences() }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showLibrary(); return true }
     func applicationWillTerminate(_ notification: Notification) { windows.values.forEach { $0.persist() } }

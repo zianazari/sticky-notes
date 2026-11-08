@@ -68,8 +68,12 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 - Five colors: **Yellow, Rose, Sage, Sky, and Lavender**.
 - **My Notes** displays saved notes with their titles and modification times.
 - Single-click to select; double-click to open.
+- A collapsible **Groups** sidebar with **All Notes**, **Ungrouped**, and custom groups.
+- Create, rename, and delete groups; deleting a group keeps its notes in Ungrouped.
+- Right-click a note to open, move, or delete it; create new notes directly in the current group.
+- Compact pastel cards with text previews, timestamps, and a thin selection outline.
 - Automatic local saving after edits and when a note closes.
-- A confirmation before permanently deleting a note.
+- Confirmation before deleting notes with content; empty notes and empty groups delete immediately.
 - Independently resizable windows, with a minimum size that keeps all controls visible.
 
 ### Rich text, without a separate document app
@@ -90,7 +94,7 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 
 ### Make it feel right
 
-- Light and dark appearances.
+- Light and dark appearances follow your macOS settings automatically.
 - Window opacity from **25% to 100%**.
 - **Keep note above** is saved independently for each note.
 - Persistent defaults for new notes: font family, font size, color, and writing direction.

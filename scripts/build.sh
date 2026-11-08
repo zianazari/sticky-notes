@@ -5,7 +5,7 @@ mkdir -p .build/module-cache 'dist/Sticky Notes.app/Contents/MacOS'
 # Remove only our custom icon metadata before signing the next build.
 swift -module-cache-path .build/module-cache scripts/set-app-icon.swift --clear
 xattr -d com.apple.FinderInfo 'dist/Sticky Notes.app' 2>/dev/null || true
-swiftc -O -module-cache-path .build/module-cache Sources/StickyNotes/main.swift -o 'dist/Sticky Notes.app/Contents/MacOS/StickyNotes'
+swiftc -O -module-cache-path .build/module-cache Sources/StickyNotes/*.swift -o 'dist/Sticky Notes.app/Contents/MacOS/StickyNotes'
 mkdir -p .build/AppIcon.iconset 'dist/Sticky Notes.app/Contents/Resources'
 for size in 16 32 128 256 512; do
     sips -z "$size" "$size" Assets/AppIcon.png --out ".build/AppIcon.iconset/icon_${size}x${size}.png" >/dev/null
