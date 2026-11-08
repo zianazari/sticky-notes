@@ -44,6 +44,7 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 
 - **Your notes, on your Mac.** No account, cloud service, or subscription required.
 - **An independent window for every note.** Resize it, keep it above other windows, or close it for later.
+- **A place for every project.** Organize notes into groups and see how many notes each group contains.
 - **A familiar native editor.** Fonts, headings, images, and writing direction use macOS text-editing foundations.
 
 
@@ -66,15 +67,29 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 ### Notes that stay with you
 
 - Five colors: **Yellow, Rose, Sage, Sky, and Lavender**.
-- **My Notes** displays saved notes with their titles and modification times.
-- Single-click to select; double-click to open.
-- A collapsible **Groups** sidebar with **All Notes**, **Ungrouped**, and custom groups.
-- Create, rename, and delete groups; deleting a group keeps its notes in Ungrouped.
-- Right-click a note to open, move, or delete it; create new notes directly in the current group.
-- Compact pastel cards with text previews, timestamps, and a thin selection outline.
 - Automatic local saving after edits and when a note closes.
-- Confirmation before deleting notes with content; empty notes and empty groups delete immediately.
 - Independently resizable windows, with a minimum size that keeps all controls visible.
+- Confirmation before deleting notes with content; empty notes delete immediately.
+
+### A simpler My Notes
+
+- Compact pastel cards show each note's title, text preview, and modification time.
+- Single-click to select with a thin outline; double-click to open the note in its own window.
+- Right-click a card for **Open Note in New Window**, **New Note**, **Move to**, and **Delete**.
+- The **Move to** submenu lists your groups and **Ungrouped**, with a checkmark beside the note's current location.
+- A compact **New note** button with an icon; move and delete actions live in the context menu.
+
+### Groups and sidebar
+
+- Browse **All Notes**, **Ungrouped**, or your own groups, with note counts aligned along the right edge.
+- Add a group instantly as **New Group**, then edit its name directly in the list. Additional groups receive unique default names.
+- Hover over a group row to reveal its **⋯** menu for renaming or deleting it. These actions are also available with a right-click.
+- Create notes directly in the selected group, or move existing notes between groups.
+- Deleting a group keeps its notes in **Ungrouped**. Empty groups delete without a confirmation prompt.
+- A distinct sidebar background, readable folder icons, and a subtle selection with a highlighted name and icon.
+- Matching buttons for adding a group and showing or hiding the sidebar, placed together above the list.
+- Smooth opening and closing animations that respect the macOS **Reduce motion** setting. The app remembers whether the sidebar is hidden.
+- Groups and note membership are saved locally and restored when you reopen the app.
 
 ### Rich text, without a separate document app
 
@@ -94,7 +109,7 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 
 ### Make it feel right
 
-- Light and dark appearances follow your macOS settings automatically.
+- Light and dark appearances follow your macOS settings automatically, including notes that are already open.
 - Window opacity from **25% to 100%**.
 - **Keep note above** is saved independently for each note.
 - Persistent defaults for new notes: font family, font size, color, and writing direction.
