@@ -321,7 +321,7 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         columns.selectItem(at: flow.columns - 1)
         columns.target = self; columns.action = #selector(addColumns(_:))
         let footer = row([colors, button("Image", self, #selector(addImage)), keepAboveToggle])
-        let insertControls = row([button("Resize image", self, #selector(resizeImage)), columns])
+        let insertControls = row([columns])
         let stack = NSStackView(views: [controls, insertControls, scroll, footer]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         w.contentView!.addSubview(stack)
@@ -367,21 +367,6 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]
         guard panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) else { return }
         editor.insertImage(image); persist()
-    }
-    @objc func resizeImage() {
-        let range = editor.selectedRange()
-        guard let original = editor.selectedImage(), original.size.width > 0 else {
-            let alert = NSAlert(); alert.messageText = "Select an image first"; alert.informativeText = "Click the image in your note, then choose Resize image."; alert.runModal(); return
-        }
-        let alert = NSAlert(); alert.messageText = "Image width"; alert.informativeText = "Enter a width from 20 to 2000 points. Proportions are preserved."
-        let field = NSTextField(string: String(Int(original.size.width))); field.frame = NSRect(x: 0, y: 0, width: 220, height: 26); alert.accessoryView = field
-        alert.addButton(withTitle: "Resize"); alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard let width = Double(field.stringValue), width.isFinite, (20...2000).contains(width) else {
-            let error = NSAlert(); error.messageText = "Enter a number between 20 and 2000."; error.runModal(); return
-        }
-        editor.setSelectedRange(range)
-        editor.resizeSelectedImage(to: width); persist()
     }
     @objc func addColumns(_ popup: NSPopUpButton) {
         let selection = editor.selectedRange()

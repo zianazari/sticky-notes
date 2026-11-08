@@ -86,7 +86,6 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 - Add images with the **Image** button, paste them, or drag image files into a note.
 - Click an image to select it; press **Delete** to remove it.
 - Drag the selected image's lower-right blue handle to resize it.
-- Use **Resize image** to enter a precise width while preserving its proportions.
 - Images are embedded in the saved note rather than linked to their original file location.
 
 ### Make it feel right
