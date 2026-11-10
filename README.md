@@ -73,7 +73,9 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 
 ### A simpler My Notes
 
-- Compact pastel cards show each note's title, text preview, and modification time.
+- Switch between **List** and **Grid** using the controls beside **New note**. Your preferred view is remembered.
+- Compact pastel cards show each note's title, text preview, and modification time. Grid cards arrange themselves to fit the window.
+- Both views support group filtering, selection, double-click to open, and the same right-click actions.
 - Single-click to select with a thin outline; double-click to open the note in its own window.
 - Right-click a card for **Open Note in New Window**, **New Note**, **Move to**, and **Delete**.
 - The **Move to** submenu lists your groups and **Ungrouped**, with a checkmark beside the note's current location.
@@ -93,24 +95,27 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 
 ### Rich text, without a separate document app
 
-- Native font picker, **bold**, underline, and bullet insertion.
+- Choose installed fonts from a dropdown in each note, with **bold**, underline, and bullet insertion.
+- Font changes preserve existing text sizes and styles; select text to format it or choose a font for what you type next.
 - Press **Enter** in a bulleted item to continue the list automatically; press **Enter** on an empty item to end it.
 - **Text, H1, H2, and H3** styles.
-- Left and right alignment, plus left-to-right and right-to-left writing.
+- **Left, center, and right alignment**, with separate **LTR/RTL** writing-direction controls.
+- Alignment and font controls work in either column.
 - **One or two continuous text columns** sharing the same document.
 - Click an empty second column to start writing there. Switching back to one column brings all text together in order.
 - Standard copy, cut, paste, select-all, and text undo shortcuts.
 
 ### Images inside your notes
 
-- Add images with the **Image** button, paste them, or drag image files into a note.
+- Add images with the **Image** button, paste them, or drag one or more image files onto a note.
+- Drop images at the desired position in either text column, including an empty second column. Drags containing PNG or TIFF image data from other apps are also supported.
 - Click an image to select it; press **Delete** to remove it.
 - Drag the selected image's lower-right blue handle to resize it.
 - Images are embedded in the saved note rather than linked to their original file location.
 
 ### Make it feel right
 
-- Light and dark appearances follow your macOS settings automatically, including notes that are already open.
+- Choose **Light**, **Dark**, or **System** in Settings. System follows macOS automatically; your choice is saved and applies to existing and new windows.
 - Window opacity from **25% to 100%**.
 - **Keep note above** is saved independently for each note.
 - Persistent defaults for new notes: font family, font size, color, and writing direction.

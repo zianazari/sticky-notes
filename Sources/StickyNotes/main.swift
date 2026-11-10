@@ -1,6 +1,21 @@
 import AppKit
 import UniformTypeIdentifiers
 
+enum AppAppearanceMode: String, CaseIterable {
+    case system, light, dark
+    var title: String { rawValue.capitalized }
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+    static var current: AppAppearanceMode {
+        AppAppearanceMode(rawValue: UserDefaults.standard.string(forKey: "appearanceMode") ?? "") ?? .system
+    }
+}
+
 struct Note: Codable {
     var id = UUID()
     var title = "Untitled note"
@@ -136,7 +151,7 @@ final class NoteTextView: NSTextView {
                                       range: NSRange(location: start, length: location - start))
         if previousBreak.location != NSNotFound { start = NSMaxRange(previousBreak) }
         let nextBreak = text.range(of: "\u{000c}", options: [],
-                                  range: NSRange(location: location, length: contentsEnd - location))
+                                  range: NSRange(location: location, length: max(0, contentsEnd - location)))
         if nextBreak.location != NSNotFound { contentsEnd = nextBreak.location }
         return NSRange(location: start, length: contentsEnd - start)
     }
@@ -236,38 +251,85 @@ final class NoteTextView: NSTextView {
         super.mouseUp(with: event)
     }
 
-    func insertImage(_ image: NSImage) {
+    @discardableResult func insertImage(_ image: NSImage) -> Bool {
+        guard image.isValid, image.size.width > 0, image.size.height > 0 else { return false }
         let copy = image.copy() as! NSImage
         let width = min(360, max(60, bounds.width - 32))
         if copy.size.width > width { copy.size = NSSize(width: width, height: copy.size.height * width / copy.size.width) }
-        guard let data = copy.tiffRepresentation else { return }
+        guard let data = copy.tiffRepresentation else { return false }
         let wrapper = FileWrapper(regularFileWithContents: data); wrapper.preferredFilename = "image-\(UUID().uuidString).tiff"
         let attachment = NSTextAttachment(fileWrapper: wrapper); attachment.attachmentCell = NSTextAttachmentCell(imageCell: copy)
         let content = NSMutableAttributedString(attachment: attachment)
         if let style = typingAttributes[.paragraphStyle] { content.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: content.length)) }
         insertText(content, replacementRange: selectedRange())
+        return true
+    }
+    static let imageDragTypes: [NSPasteboard.PasteboardType] =
+        [.fileURL, .png, .tiff] + NSImage.imageTypes.map { NSPasteboard.PasteboardType($0) }
+    private var imageDragCache: (name: NSPasteboard.Name, changeCount: Int, images: [NSImage])?
+
+    static func images(from items: [NSPasteboardItem]) -> [NSImage] {
+        items.compactMap { item in
+            // Prefer the original local file when the drag also includes a preview.
+            if let value = item.string(forType: .fileURL), let url = URL(string: value), url.isFileURL,
+               let image = NSImage(contentsOf: url), image.isValid { return image }
+            for type in imageDragTypes where type != .fileURL {
+                if let data = item.data(forType: type), let image = NSImage(data: data), image.isValid { return image }
+            }
+            return nil
+        }
     }
     func droppedImages(_ sender: NSDraggingInfo) -> [NSImage] {
-        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return urls.compactMap { NSImage(contentsOf: $0) }
+        let board = sender.draggingPasteboard
+        if let cache = imageDragCache, cache.name == board.name, cache.changeCount == board.changeCount { return cache.images }
+        let images = Self.images(from: board.pasteboardItems ?? [])
+        imageDragCache = (board.name, board.changeCount, images)
+        return images
+    }
+    private func acceptsImageDrop(_ sender: NSDraggingInfo) -> Bool {
+        isEditable && sender.draggingSourceOperationMask.contains(.copy) && !droppedImages(sender).isEmpty
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if !droppedImages(sender).isEmpty { return .copy }
+        if acceptsImageDrop(sender) { return .copy }
         return super.draggingEntered(sender)
     }
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if !droppedImages(sender).isEmpty { return .copy }
+        if acceptsImageDrop(sender) { return .copy }
         return super.draggingUpdated(sender)
     }
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let images = droppedImages(sender)
-        guard !images.isEmpty else { return super.performDragOperation(sender) }
-        let point = convert(sender.draggingLocation, from: nil)
-        let index = min(characterIndexForInsertion(at: point), textStorage?.length ?? 0)
-        setSelectedRange(NSRange(location: index, length: 0))
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if acceptsImageDrop(sender) { return true }
+        return super.prepareForDragOperation(sender)
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        imageDragCache = nil
+        super.draggingExited(sender)
+    }
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        imageDragCache = nil
+        super.concludeDragOperation(sender)
+    }
+    @discardableResult func insertDroppedImages(_ images: [NSImage], at point: NSPoint) -> Bool {
+        guard isEditable, !images.isEmpty else { return false }
+        breakUndoCoalescing()
+        let undo = undoManager
+        undo?.beginUndoGrouping()
+        defer { undo?.endUndoGrouping(); breakUndoCoalescing() }
+        // An unused second column needs its own insertion position before dropping.
+        if prepareEmptyColumn?() != true {
+            let index = min(characterIndexForInsertion(at: point), textStorage?.length ?? 0)
+            setSelectedRange(NSRange(location: index, length: 0))
+        }
         window?.makeFirstResponder(self)
-        for image in images { insertImage(image) }
-        return true
+        var inserted = false
+        for image in images { if insertImage(image) { inserted = true } }
+        return inserted
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard acceptsImageDrop(sender) else { return super.performDragOperation(sender) }
+        let images = droppedImages(sender)
+        defer { imageDragCache = nil }
+        return insertDroppedImages(images, at: convert(sender.draggingLocation, from: nil))
     }
 
     func attachmentRange(at point: NSPoint) -> NSRange? {
@@ -321,7 +383,7 @@ final class FlowDocument: NSView {
             view.textContainerInset = NSSize(width: 8, height: 12)
             view.textContainer?.widthTracksTextView = false
             view.textContainer?.heightTracksTextView = false
-            view.registerForDraggedTypes([.fileURL, .tiff, .png])
+            view.registerForDraggedTypes(NoteTextView.imageDragTypes)
             addSubview(view)
         }
         secondary.prepareEmptyColumn = { [weak self] in self?.prepareSecondaryInsertion() ?? false }
@@ -408,6 +470,9 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         if let lastActiveEditor, !lastActiveEditor.isHidden { return lastActiveEditor }
         return primaryEditor
     }
+    let fontPicker = NSPopUpButton()
+    let alignmentControl = NSSegmentedControl()
+    let directionControl = NSSegmentedControl()
     let noteScroll = NSScrollView()
     let columns = NSPopUpButton()
     let colors = NSPopUpButton()
@@ -415,10 +480,11 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     init(note: Note) {
         id = note.id
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        w.appearance = AppAppearanceMode.current.appearance
         super.init(window: w); w.titlebarAppearsTransparent = true; w.titlebarSeparatorStyle = .none; w.delegate = self; w.title = note.title; w.center(); w.setFrameAutosaveName(note.id.uuidString)
         let scroll = noteScroll; scroll.hasVerticalScroller = true; scroll.drawsBackground = false
         editor.isRichText = true; editor.importsGraphics = true; editor.allowsUndo = true; editor.isVerticallyResizable = true; editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true
-        editor.registerForDraggedTypes([.fileURL, .tiff, .png])
+        editor.registerForDraggedTypes(NoteTextView.imageDragTypes)
         editor.textContainerInset = NSSize(width: 12, height: 16)
         editor.font = NSFont(name: UserDefaults.standard.string(forKey: "font") ?? "Helvetica", size: UserDefaults.standard.double(forKey: "size")) ?? .systemFont(ofSize: 17)
         editor.textColor = .black
@@ -429,18 +495,39 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         scroll.documentView = flow
         primaryEditor.delegate = self; flow.secondary.delegate = self
         for textView in [primaryEditor, flow.secondary] {
-            textView.didBecomeActive = { [weak self] active in self?.lastActiveEditor = active }
+            textView.didBecomeActive = { [weak self] active in self?.lastActiveEditor = active; self?.syncFormattingControls() }
         }
         populateColors(colors); colors.selectItem(at: note.color); colors.target = self; colors.action = #selector(changeColor)
         let heading = NSPopUpButton(); heading.addItems(withTitles: ["Text", "H1", "H2", "H3"]); heading.target = self; heading.action = #selector(headingChanged(_:))
-        let controls = row([heading, button("Font", self, #selector(fontPanel)), button("B", self, #selector(bold)), button("U", self, #selector(underline)), button("•", self, #selector(bullet)), button("←", self, #selector(left)), button("→", self, #selector(right))])
+        fontPicker.addItem(withTitle: "System Font")
+        fontPicker.addItems(withTitles: NSFontManager.shared.availableFontFamilies.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+        fontPicker.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        fontPicker.cell?.lineBreakMode = .byTruncatingTail
+        fontPicker.toolTip = "Font family"; fontPicker.setAccessibilityLabel("Font family")
+        fontPicker.target = self; fontPicker.action = #selector(fontChanged(_:))
+        alignmentControl.segmentCount = 3; alignmentControl.trackingMode = .selectOne
+        for (index, symbol) in ["text.alignleft", "text.aligncenter", "text.alignright"].enumerated() {
+            let label = ["Align left", "Align center", "Align right"][index]
+            alignmentControl.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: label), forSegment: index)
+            alignmentControl.setToolTip(label, forSegment: index); alignmentControl.setWidth(28, forSegment: index)
+        }
+        alignmentControl.setAccessibilityLabel("Text alignment")
+        alignmentControl.target = self; alignmentControl.action = #selector(alignmentChanged(_:))
+        directionControl.segmentCount = 2; directionControl.trackingMode = .selectOne
+        for (index, label) in ["LTR", "RTL"].enumerated() {
+            directionControl.setLabel(label, forSegment: index); directionControl.setWidth(34, forSegment: index)
+            directionControl.setToolTip(index == 0 ? "Write left to right" : "Write right to left", forSegment: index)
+        }
+        directionControl.setAccessibilityLabel("Writing direction")
+        directionControl.target = self; directionControl.action = #selector(directionChanged(_:))
+        let controls = row([heading, fontPicker, button("B", self, #selector(bold)), button("U", self, #selector(underline)), button("•", self, #selector(bullet))])
         keepAboveToggle.state = note.keepAbove == true ? .on : .off
         keepAboveToggle.target = self; keepAboveToggle.action = #selector(changeKeepAbove)
         columns.addItems(withTitles: ["1 column", "2 columns"])
         columns.selectItem(at: flow.columns - 1)
         columns.target = self; columns.action = #selector(addColumns(_:))
         let footer = row([colors, button("Image", self, #selector(addImage)), keepAboveToggle])
-        let insertControls = row([columns])
+        let insertControls = row([columns, alignmentControl, directionControl])
         let stack = NSStackView(views: [controls, insertControls, scroll, footer]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         w.contentView!.addSubview(stack)
@@ -468,7 +555,7 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
             w.setContentSize(NSSize(width: max(current.width, minimum.width), height: max(current.height, minimum.height)))
         }
         primaryEditor.appearanceDidChange = { [weak self] in self?.paint() }
-        applyPreferences(); paint(); refreshFlow()
+        applyPreferences(); paint(); refreshFlow(); syncFormattingControls()
     }
     required init?(coder: NSCoder) { fatalError() }
     func applyPreferences() { window?.level = keepAboveToggle.state == .on ? .floating : .normal; window?.alphaValue = UserDefaults.standard.double(forKey: "opacity"); paint() }
@@ -526,7 +613,85 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     }
     func windowDidResize(_ notification: Notification) { refreshFlow() }
     @objc func changeColor() { paint(); persist() }
-    @objc func fontPanel() { window?.makeFirstResponder(editor); NSFontManager.shared.orderFrontFontPanel(self) }
+    func syncFormattingControls() {
+        guard fontPicker.numberOfItems > 0 else { return }
+        let active = editor
+        let selection = active.selectedRange()
+        let attributes = selection.length > 0 && selection.location < (active.textStorage?.length ?? 0)
+            ? active.textStorage!.attributes(at: selection.location, effectiveRange: nil) : active.typingAttributes
+        let font = attributes[.font] as? NSFont ?? active.font ?? .systemFont(ofSize: 17)
+        let family = font.familyName ?? "System Font"
+        fontPicker.selectItem(withTitle: fontPicker.item(withTitle: family) == nil ? "System Font" : family)
+        let style = attributes[.paragraphStyle] as? NSParagraphStyle
+        let alignment = style?.alignment ?? active.alignment
+        alignmentControl.selectedSegment = alignment == .center ? 1 : alignment == .right ? 2 : 0
+        let direction = style?.baseWritingDirection ?? active.baseWritingDirection
+        directionControl.selectedSegment = direction == .rightToLeft ? 1 : 0
+    }
+    private func replaceFormatting(in active: NoteTextView, range: NSRange, with replacement: NSAttributedString) {
+        let selection = active.selectedRange()
+        guard active.shouldChangeText(in: range, replacementString: nil) else { return }
+        active.breakUndoCoalescing()
+        active.textStorage?.replaceCharacters(in: range, with: replacement)
+        active.didChangeText()
+        active.setSelectedRange(selection)
+        active.breakUndoCoalescing()
+    }
+    @objc func fontChanged(_ sender: NSPopUpButton) {
+        guard let family = sender.titleOfSelectedItem else { return }
+        let active = editor
+        window?.makeFirstResponder(active)
+        let manager = NSFontManager.shared
+        func convert(_ font: NSFont) -> NSFont {
+            if family == "System Font" {
+                return manager.convert(.systemFont(ofSize: font.pointSize), toHaveTrait: manager.traits(of: font))
+            }
+            return manager.convert(font, toFamily: family)
+        }
+        let selection = active.selectedRange()
+        var typing = active.typingAttributes
+        typing[.font] = convert(typing[.font] as? NSFont ?? active.font ?? .systemFont(ofSize: 17))
+        if selection.length > 0, let storage = active.textStorage {
+            let replacement = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: selection))
+            replacement.enumerateAttribute(.font, in: NSRange(location: 0, length: replacement.length)) { value, range, _ in
+                replacement.addAttribute(.font, value: convert(value as? NSFont ?? .systemFont(ofSize: 17)), range: range)
+            }
+            replaceFormatting(in: active, range: selection, with: replacement)
+        }
+        active.typingAttributes = typing
+        syncFormattingControls(); persist()
+    }
+    func setParagraphStyle(_ change: (NSMutableParagraphStyle) -> Void) {
+        let active = editor
+        window?.makeFirstResponder(active)
+        let selection = active.selectedRange()
+        guard selection.location != NSNotFound, let storage = active.textStorage else { return }
+        let first = active.listParagraphRange(at: selection.location)
+        let last = active.listParagraphRange(at: selection.length > 0 ? NSMaxRange(selection) - 1 : selection.location)
+        let range = NSRange(location: first.location, length: NSMaxRange(last) - first.location)
+        var typing = active.typingAttributes
+        let base = typing[.paragraphStyle] as? NSParagraphStyle ?? .default
+        let typingStyle = base.mutableCopy() as! NSMutableParagraphStyle
+        change(typingStyle); typing[.paragraphStyle] = typingStyle
+        if range.length > 0 {
+            let replacement = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
+            replacement.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: replacement.length)) { value, range, _ in
+                let style = (value as? NSParagraphStyle ?? base).mutableCopy() as! NSMutableParagraphStyle
+                change(style); replacement.addAttribute(.paragraphStyle, value: style, range: range)
+            }
+            replaceFormatting(in: active, range: range, with: replacement)
+        }
+        active.typingAttributes = typing
+        refreshFlow(); syncFormattingControls(); persist()
+    }
+    @objc func alignmentChanged(_ sender: NSSegmentedControl) {
+        let alignment: NSTextAlignment = [.left, .center, .right][max(0, min(2, sender.selectedSegment))]
+        setParagraphStyle { $0.alignment = alignment }
+    }
+    @objc func directionChanged(_ sender: NSSegmentedControl) {
+        let direction: NSWritingDirection = sender.selectedSegment == 1 ? .rightToLeft : .leftToRight
+        setParagraphStyle { $0.baseWritingDirection = direction }
+    }
     @objc func bold() {
         let range = editor.selectedRange()
         let current = (editor.typingAttributes[.font] as? NSFont) ?? .systemFont(ofSize: 17)
@@ -536,8 +701,9 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         editor.typingAttributes[.font] = newFont; persist()
     }
     @objc func underline() { editor.underline(self); persist() }
-    @objc func left() { editor.alignLeft(self); editor.makeBaseWritingDirectionLeftToRight(self); persist() }
-    @objc func right() { editor.alignRight(self); editor.makeBaseWritingDirectionRightToLeft(self); persist() }
+    @objc func left() { setParagraphStyle { $0.alignment = .left } }
+    @objc func center() { setParagraphStyle { $0.alignment = .center } }
+    @objc func right() { setParagraphStyle { $0.alignment = .right } }
     @objc func bullet() {
         let active = editor
         window?.makeFirstResponder(active)
@@ -550,7 +716,8 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         if range.length > 0 { editor.textStorage?.addAttribute(.font, value: font, range: range) }
         editor.typingAttributes[.font] = font; persist()
     }
-    func textDidChange(_ notification: Notification) { refreshFlow(); persist() }
+    func textDidChange(_ notification: Notification) { refreshFlow(); syncFormattingControls(); persist() }
+    func textViewDidChangeSelection(_ notification: Notification) { syncFormattingControls() }
     func persist() {
         guard let i = Store.shared.notes.firstIndex(where: { $0.id == id }) else { return }
         Store.shared.notes[i].columnCount = flow.columns
@@ -568,6 +735,7 @@ final class App: NSObject, NSApplicationDelegate {
     var library: NSWindow!
     var libraryController: LibraryController!
     var settings: NSWindow?
+    let appearancePicker = NSPopUpButton()
     let rtlToggle = NSButton(checkboxWithTitle: "Right-to-left for new notes", target: nil, action: nil)
     let opacity = NSSlider(value: 1, minValue: 0.25, maxValue: 1, target: nil, action: nil)
     let opacityLabel = NSTextField(labelWithString: "")
@@ -576,6 +744,7 @@ final class App: NSObject, NSApplicationDelegate {
     let color = NSPopUpButton()
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["size": 17.0, "opacity": 1.0, "font": "Helvetica", "color": 0])
+        applyAppearance()
         NSApp.setActivationPolicy(.regular)
         // Use the transparent source directly for the running Dock icon.
         if let url = Bundle.main.url(forResource: "DockIcon", withExtension: "png"), let icon = NSImage(contentsOf: url) {
@@ -602,7 +771,7 @@ final class App: NSObject, NSApplicationDelegate {
         libraryController = LibraryController()
         library.contentViewController = libraryController
         library.center(); library.setFrameAutosaveName("MyNotesLibrary")
-        library.appearance = nil
+        library.appearance = AppAppearanceMode.current.appearance
         showLibrary(); NSApp.activate(ignoringOtherApps: true)
     }
     @objc func showLibrary() { libraryController?.selectAllNotes(); library.makeKeyAndOrderFront(nil); reload() }
@@ -622,17 +791,41 @@ final class App: NSObject, NSApplicationDelegate {
         windows[id]?.close(); windows.removeValue(forKey: id)
         Store.shared.notes.removeAll { $0.id == id }; Store.shared.save(); reload()
     }
+    func configureAppearancePicker() {
+        appearancePicker.removeAllItems()
+        for mode in AppAppearanceMode.allCases {
+            appearancePicker.addItem(withTitle: mode.title)
+            appearancePicker.lastItem?.representedObject = mode.rawValue
+        }
+        appearancePicker.selectItem(withTitle: AppAppearanceMode.current.title)
+        appearancePicker.setAccessibilityLabel("Appearance")
+        appearancePicker.target = self; appearancePicker.action = #selector(appearanceChanged(_:))
+    }
+    @objc func appearanceChanged(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String, let mode = AppAppearanceMode(rawValue: raw) else { return }
+        UserDefaults.standard.set(mode.rawValue, forKey: "appearanceMode")
+        applyAppearance()
+    }
+    func applyAppearance() {
+        let appearance = AppAppearanceMode.current.appearance
+        NSApp.appearance = appearance
+        library?.appearance = appearance; settings?.appearance = appearance
+        windows.values.forEach { $0.window?.appearance = appearance; $0.paint() }
+        library?.contentView?.needsDisplay = true
+    }
     @objc func showSettings() {
         if let settings { settings.makeKeyAndOrderFront(nil); return }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 450, height: 360), styleMask: [.titled, .closable], backing: .buffered, defer: false); w.title = "Settings"; w.isReleasedWhenClosed = false; w.center(); settings = w
+        w.appearance = AppAppearanceMode.current.appearance
         let d = UserDefaults.standard
+        configureAppearancePicker()
         rtlToggle.state = d.bool(forKey: "rtl") ? .on : .off
         font.addItems(withTitles: NSFontManager.shared.availableFontFamilies.sorted()); font.selectItem(withTitle: d.string(forKey: "font")!)
         size.addItems(withTitles: ["12", "14", "17", "20", "24", "28"]); size.selectItem(withTitle: String(Int(d.double(forKey: "size"))))
         populateColors(color); color.selectItem(at: d.integer(forKey: "color")); opacity.doubleValue = d.double(forKey: "opacity")
         for control: NSControl in [rtlToggle, font, size, color, opacity] { control.target = self; control.action = #selector(saveSettings) }
         let hint = NSTextField(wrappingLabelWithString: "Version \(appVersion)\n\nFont, direction and color apply to new notes. Opacity applies to all open notes. Keep note above is set separately on each note. Changes are saved automatically.")
-        let stack = NSStackView(views: [NSTextField(labelWithString: "Appearance follows macOS settings."), row([NSTextField(labelWithString: "Opacity"), opacity, opacityLabel]), row([NSTextField(labelWithString: "Font"), font, size]), row([NSTextField(labelWithString: "New note color"), color]), rtlToggle, hint]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18; layout(stack, in: w.contentView!); saveSettings(); w.makeKeyAndOrderFront(nil)
+        let stack = NSStackView(views: [row([NSTextField(labelWithString: "Appearance"), appearancePicker]), row([NSTextField(labelWithString: "Opacity"), opacity, opacityLabel]), row([NSTextField(labelWithString: "Font"), font, size]), row([NSTextField(labelWithString: "New note color"), color]), rtlToggle, hint]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18; layout(stack, in: w.contentView!); saveSettings(); w.makeKeyAndOrderFront(nil)
     }
     @objc func saveSettings() {
         let d = UserDefaults.standard; d.set(rtlToggle.state == .on, forKey: "rtl"); d.set(opacity.doubleValue, forKey: "opacity"); d.set(font.titleOfSelectedItem, forKey: "font"); d.set(Double(size.titleOfSelectedItem ?? "17")!, forKey: "size"); d.set(color.indexOfSelectedItem, forKey: "color"); opacityLabel.stringValue = "\(Int(opacity.doubleValue * 100))%"; windows.values.forEach { $0.applyPreferences() }

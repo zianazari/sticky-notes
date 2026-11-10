@@ -19,14 +19,41 @@ final class LibrarySurface: NSView {
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 }
 
-final class NoteCard: NSView {
+class NoteCard: NSView {
     let title = NSTextField(labelWithString: "")
     let preview = NSTextField(labelWithString: "")
     let date = NSTextField(labelWithString: "")
     var tint: NSColor = .yellow
     var selected = false { didSet { needsDisplay = true } }
-    init(note: Note) {
+    init(note: Note, grid: Bool = false) {
         super.init(frame: .zero)
+        wantsLayer = true; layer?.masksToBounds = true
+        layerContentsRedrawPolicy = .duringViewResize
+        update(note)
+        for field in [title, preview, date] { field.lineBreakMode = .byTruncatingTail; field.maximumNumberOfLines = 1; field.translatesAutoresizingMaskIntoConstraints = false; addSubview(field) }
+        date.setContentCompressionResistancePriority(.required, for: .horizontal)
+        if grid {
+            title.maximumNumberOfLines = 2
+            preview.maximumNumberOfLines = 5; preview.lineBreakMode = .byWordWrapping
+            NSLayoutConstraint.activate([
+                title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22), title.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+                title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                preview.leadingAnchor.constraint(equalTo: title.leadingAnchor), preview.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+                preview.trailingAnchor.constraint(equalTo: title.trailingAnchor), preview.bottomAnchor.constraint(lessThanOrEqualTo: date.topAnchor, constant: -10),
+                date.leadingAnchor.constraint(equalTo: title.leadingAnchor), date.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -15),
+                date.trailingAnchor.constraint(lessThanOrEqualTo: title.trailingAnchor)
+            ])
+        } else {
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22), title.topAnchor.constraint(equalTo: topAnchor, constant: 17),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: date.leadingAnchor, constant: -16),
+            preview.leadingAnchor.constraint(equalTo: title.leadingAnchor), preview.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 5),
+            preview.trailingAnchor.constraint(lessThanOrEqualTo: date.leadingAnchor, constant: -16),
+            date.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18), date.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+        }
+    }
+    func update(_ note: Note) {
         tint = palette[min(max(note.color, 0), palette.count - 1)]
         title.stringValue = note.title; title.font = .systemFont(ofSize: 15, weight: .semibold)
         let text = note.richText.isEmpty ? "" : (NSAttributedString(rtfd: note.richText, documentAttributes: nil)?.string ?? NSAttributedString(rtf: note.richText, documentAttributes: nil)?.string ?? "")
@@ -38,19 +65,18 @@ final class NoteCard: NSView {
         if Calendar.current.isDateInToday(note.modified) { formatter.dateStyle = .none; formatter.timeStyle = .short }
         else { formatter.dateStyle = .short; formatter.timeStyle = .none }
         date.stringValue = formatter.string(from: note.modified); date.font = .systemFont(ofSize: 12); date.textColor = .secondaryLabelColor
-        for field in [title, preview, date] { field.lineBreakMode = .byTruncatingTail; field.maximumNumberOfLines = 1; field.translatesAutoresizingMaskIntoConstraints = false; addSubview(field) }
-        date.setContentCompressionResistancePriority(.required, for: .horizontal)
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22), title.topAnchor.constraint(equalTo: topAnchor, constant: 17),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: date.leadingAnchor, constant: -16),
-            preview.leadingAnchor.constraint(equalTo: title.leadingAnchor), preview.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 5),
-            preview.trailingAnchor.constraint(lessThanOrEqualTo: date.leadingAnchor, constant: -16),
-            date.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18), date.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
+        setAccessibilityLabel(note.title)
+        needsDisplay = true
+    }
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsDisplay = true
     }
     required init?(coder: NSCoder) { fatalError() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
     override func draw(_ dirtyRect: NSRect) {
+        // Clear the previous layer contents, including old selection outlines.
+        NSColor.clear.setFill(); dirtyRect.fill(using: .copy)
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 3), xRadius: 11, yRadius: 11)
         (tint.blended(withFraction: dark ? 0.77 : 0.58, of: dark ? .black : .white) ?? tint).setFill(); card.fill()
@@ -107,9 +133,90 @@ final class GroupCell: NSView {
     }
 }
 
-final class LibraryController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
+enum LibraryDisplayMode: String { case list, grid }
+
+// Handle clicks on the whole card, including its text labels. Collection-view
+// item subviews do not reliably forward double-clicks to the collection itself.
+final class NoteGridCard: NoteCard {
+    var clicked: ((Int) -> Void)?
+    var contextMenu: (() -> NSMenu?)?
+    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { clicked?(event.clickCount) }
+    override func menu(for event: NSEvent) -> NSMenu? { contextMenu?() }
+}
+
+final class NoteGridItem: NSCollectionViewItem {
+    static let identifier = NSUserInterfaceItemIdentifier("NoteGridItem")
+    override func loadView() { view = NoteGridCard(note: Note(), grid: true) }
+    override var isSelected: Bool { didSet { (view as? NoteCard)?.selected = isSelected } }
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        isSelected = false
+        let card = view as! NoteGridCard
+        card.clicked = nil; card.contextMenu = nil
+    }
+    func configure(_ note: Note, clicked: @escaping (Int) -> Void, contextMenu: @escaping () -> NSMenu?) {
+        // Keep the collection-owned root view stable across reloads and reuse.
+        // Replacing it leaves the old card attached with stale geometry/content.
+        let card = view as! NoteGridCard
+        card.update(note)
+        card.clicked = clicked; card.contextMenu = contextMenu
+        card.selected = isSelected
+    }
+}
+
+final class NoteGridLayout: NSCollectionViewFlowLayout {
+    func updateItemSize(for width: CGFloat) {
+        guard width > 1 else { return }
+        let columns = max(1, Int((width + 12) / 212))
+        let size = NSSize(width: floor((width - CGFloat(columns - 1) * 12) / CGFloat(columns)), height: 180)
+        if itemSize != size { itemSize = size; invalidateLayout() }
+    }
+    override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool {
+        newBounds.width != collectionView?.bounds.width || super.shouldInvalidateLayout(forBoundsChange: newBounds)
+    }
+}
+
+final class NoteGridScrollView: NSScrollView {
+    private var isTilingGrid = false
+    override func tile() {
+        guard !isTilingGrid else { return }
+        isTilingGrid = true; defer { isTilingGrid = false }
+        super.tile()
+        guard let collection = documentView as? NoteGridView, contentView.bounds.width > 1 else { return }
+        let width = contentView.bounds.width
+        (collection.collectionViewLayout as? NoteGridLayout)?.updateItemSize(for: width)
+        if collection.frame.width != width {
+            collection.setFrameSize(NSSize(width: width, height: collection.frame.height))
+        }
+    }
+}
+
+final class NoteGridView: NSCollectionView {
+    override func setFrameSize(_ newSize: NSSize) {
+        // Set item dimensions before AppKit caches layout attributes for this width.
+        (collectionViewLayout as? NoteGridLayout)?.updateItemSize(for: newSize.width)
+        super.setFrameSize(newSize)
+    }
+    var openItem: ((IndexPath) -> Void)?
+    var itemMenu: ((IndexPath) -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let index = indexPathForItem(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        return itemMenu?(index)
+    }
+}
+
+final class LibraryController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate {
     let notesTable = NSTableView()
     let groupsTable = NSTableView()
+    let notesGrid = NoteGridView()
+    let gridLayout = NoteGridLayout()
+    let gridScroll = NoteGridScrollView()
+    var listScroll: NSScrollView!
+    let viewPicker = NSSegmentedControl()
+    var displayMode: LibraryDisplayMode = .list
+    private var syncingSelection = false
     let heading = NSTextField(labelWithString: "My Notes")
     let countLabel = NSTextField(labelWithString: "0 notes")
     let emptyLabel = NSTextField(labelWithString: "No notes yet")
@@ -174,13 +281,32 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         newNote.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
         newNote.imagePosition = .imageLeading
         newNote.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        viewPicker.segmentCount = 2; viewPicker.trackingMode = .selectOne
+        for (index, symbol) in ["list.bullet", "square.grid.2x2"].enumerated() {
+            let label = index == 0 ? "List view" : "Grid view"
+            viewPicker.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: label), forSegment: index)
+            viewPicker.setToolTip(label, forSegment: index); viewPicker.setWidth(32, forSegment: index)
+        }
+        viewPicker.setAccessibilityLabel("Notes view")
+        viewPicker.target = self; viewPicker.action = #selector(changeDisplayMode(_:))
+        heading.lineBreakMode = .byTruncatingTail
+        heading.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let flexible = NSView()
-        let header = row([restoreSidebar, titles, flexible, newNote]); header.spacing = 12; header.detachesHiddenViews = true
+        let header = row([restoreSidebar, titles, flexible, viewPicker, newNote]); header.spacing = 12; header.detachesHiddenViews = true
         let noteScroll = setupTable(notesTable, rowHeight: 80)
+        listScroll = noteScroll
+        configureGrid()
         notesTable.doubleAction = #selector(openNote); notesTable.target = self
         notesTable.action = nil
         let noteContext = NSMenu(); noteContext.delegate = self; notesTable.menu = noteContext
-        let noteArea = NSView(); noteScroll.translatesAutoresizingMaskIntoConstraints = false; noteArea.addSubview(noteScroll)
+        let noteArea = NSView()
+        for scroll in [noteScroll, gridScroll] {
+            scroll.translatesAutoresizingMaskIntoConstraints = false; noteArea.addSubview(scroll)
+            NSLayoutConstraint.activate([
+                scroll.leadingAnchor.constraint(equalTo: noteArea.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: noteArea.trailingAnchor),
+                scroll.topAnchor.constraint(equalTo: noteArea.topAnchor), scroll.bottomAnchor.constraint(equalTo: noteArea.bottomAnchor)
+            ])
+        }
         emptyLabel.font = .systemFont(ofSize: 15); emptyLabel.textColor = .secondaryLabelColor; emptyLabel.translatesAutoresizingMaskIntoConstraints = false; noteArea.addSubview(emptyLabel)
         NSLayoutConstraint.activate([noteScroll.leadingAnchor.constraint(equalTo: noteArea.leadingAnchor), noteScroll.trailingAnchor.constraint(equalTo: noteArea.trailingAnchor), noteScroll.topAnchor.constraint(equalTo: noteArea.topAnchor), noteScroll.bottomAnchor.constraint(equalTo: noteArea.bottomAnchor), emptyLabel.centerXAnchor.constraint(equalTo: noteArea.centerXAnchor), emptyLabel.centerYAnchor.constraint(equalTo: noteArea.centerYAnchor)])
         let stack = NSStackView(views: [header, noteArea]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 22
@@ -188,7 +314,77 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         for item in [header, noteArea] { item.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         noteArea.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         isSidebarVisible = !UserDefaults.standard.bool(forKey: "librarySidebarHidden")
-        applySidebarVisibility(); reload()
+        applySidebarVisibility()
+        setDisplayMode(LibraryDisplayMode(rawValue: UserDefaults.standard.string(forKey: "libraryDisplayMode") ?? "") ?? .list)
+        reload()
+    }
+    private func configureGrid() {
+        gridLayout.minimumInteritemSpacing = 12; gridLayout.minimumLineSpacing = 12
+        gridLayout.itemSize = NSSize(width: 200, height: 180)
+        notesGrid.collectionViewLayout = gridLayout
+        notesGrid.isSelectable = true; notesGrid.allowsMultipleSelection = false
+        notesGrid.backgroundColors = [.clear]
+        notesGrid.autoresizingMask = [.width]
+        notesGrid.register(NoteGridItem.self, forItemWithIdentifier: NoteGridItem.identifier)
+        notesGrid.dataSource = self; notesGrid.delegate = self
+        notesGrid.openItem = { [weak self] index in
+            guard let self, self.notes.indices.contains(index.item) else { return }
+            App.shared.open(self.notes[index.item])
+        }
+        notesGrid.itemMenu = { [weak self] index in
+            guard let self, self.notes.indices.contains(index.item) else { return nil }
+            self.notesTable.selectRowIndexes(IndexSet(integer: index.item), byExtendingSelection: false)
+            self.updateSelection()
+            return self.noteMenu(for: self.notes[index.item])
+        }
+        gridScroll.documentView = notesGrid
+        gridScroll.hasVerticalScroller = true; gridScroll.hasHorizontalScroller = false
+        gridScroll.autohidesScrollers = true; gridScroll.drawsBackground = false
+    }
+    override func viewDidLayout() { super.viewDidLayout(); updateGridLayout() }
+    func updateGridLayout() {
+        guard isViewLoaded else { return }
+        gridLayout.updateItemSize(for: gridScroll.contentView.bounds.width)
+    }
+    @objc func changeDisplayMode(_ sender: NSSegmentedControl) {
+        setDisplayMode(sender.selectedSegment == 1 ? .grid : .list)
+    }
+    func setDisplayMode(_ mode: LibraryDisplayMode) {
+        displayMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: "libraryDisplayMode")
+        guard isViewLoaded else { return }
+        viewPicker.selectedSegment = mode == .grid ? 1 : 0
+        listScroll.isHidden = mode == .grid; gridScroll.isHidden = mode == .list
+        updateSelection(); view.layoutSubtreeIfNeeded(); updateGridLayout()
+        if let row = notes.indices.contains(notesTable.selectedRow) ? notesTable.selectedRow : nil {
+            if mode == .grid { notesGrid.scrollToItems(at: [IndexPath(item: row, section: 0)], scrollPosition: .nearestVerticalEdge) }
+            else { notesTable.scrollRowToVisible(row) }
+        }
+    }
+    func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int { notes.count }
+    func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+        let item = collectionView.makeItem(withIdentifier: NoteGridItem.identifier, for: indexPath) as! NoteGridItem
+        let id = notes[indexPath.item].id
+        item.configure(notes[indexPath.item], clicked: { [weak self] clicks in
+            guard let self, let index = self.notes.firstIndex(where: { $0.id == id }) else { return }
+            self.view.window?.makeFirstResponder(self.notesGrid)
+            self.notesTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            self.updateSelection()
+            if clicks == 2 { self.notesGrid.openItem?(IndexPath(item: index, section: 0)) }
+        }, contextMenu: { [weak self] in
+            guard let self, let index = self.notes.firstIndex(where: { $0.id == id }) else { return nil }
+            return self.notesGrid.itemMenu?(IndexPath(item: index, section: 0))
+        })
+        return item
+    }
+    func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) { syncGridSelection() }
+    func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { syncGridSelection() }
+    private func syncGridSelection() {
+        guard !isReloading, !syncingSelection else { return }
+        if let index = notesGrid.selectionIndexPaths.first, notes.indices.contains(index.item) {
+            notesTable.selectRowIndexes(IndexSet(integer: index.item), byExtendingSelection: false)
+        } else { notesTable.deselectAll(nil) }
+        updateSelection()
     }
     private func setupTable(_ table: NSTableView, rowHeight: CGFloat) -> NSScrollView {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("item")); column.resizingMask = .autoresizingMask; column.minWidth = 0; column.width = 1; table.addTableColumn(column)
@@ -209,7 +405,7 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         notes = Store.shared.notes.filter { matches($0, filter: filter) }
         heading.stringValue = filter == .all ? "My Notes" : name(for: filter)
         countLabel.stringValue = "\(notes.count) \(notes.count == 1 ? "note" : "notes")"
-        notesTable.reloadData(); groupsTable.reloadData()
+        notesTable.reloadData(); notesGrid.reloadData(); groupsTable.reloadData()
         if let id = selectedID, let index = notes.firstIndex(where: { $0.id == id }) { notesTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
         else { notesTable.deselectAll(nil) }
         if let index = filters.firstIndex(of: filter) { groupsTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
@@ -284,6 +480,13 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         } else { updateSelection() }
     }
     func updateSelection() {
+        guard !syncingSelection else { return }
+        syncingSelection = true; defer { syncingSelection = false }
+        let indexes: Set<IndexPath> = selectedNote == nil ? [] : [IndexPath(item: notesTable.selectedRow, section: 0)]
+        if notesGrid.selectionIndexPaths != indexes { notesGrid.selectionIndexPaths = indexes }
+        for item in notesGrid.visibleItems() {
+            item.isSelected = notesGrid.indexPath(for: item).map { indexes.contains($0) } ?? false
+        }
         for index in 0..<notesTable.numberOfRows { (notesTable.view(atColumn: 0, row: index, makeIfNecessary: false) as? NoteCard)?.selected = notesTable.isRowSelected(index) }
         for index in 0..<groupsTable.numberOfRows { (groupsTable.view(atColumn: 0, row: index, makeIfNecessary: false) as? GroupCell)?.selected = groupsTable.isRowSelected(index) }
     }

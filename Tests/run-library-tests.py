@@ -8,7 +8,7 @@ with tempfile.TemporaryDirectory(prefix='sticky-tests-', dir=root / '.build') as
     source = (root / 'Sources/StickyNotes/main.swift').read_text().split('let app = NSApplication.shared')[0]
     source = source.replace('static let shared = Store()', 'static let shared = Store(url: URL(fileURLWithPath: "' + str(temp / 'notes.json') + '"))')
     source = source.replace('UserDefaults.standard', 'UserDefaults(suiteName: "StickyNotes.LibraryTests")!')
-    (temp / 'main.swift').write_text(source + '\n' + '\n'.join((root / 'Tests' / name).read_text() for name in ['LibraryTests.swift', 'BulletTests.swift']).replace('UserDefaults.standard', 'UserDefaults(suiteName: \"StickyNotes.LibraryTests\")!'))
+    (temp / 'main.swift').write_text(source + '\n' + '\n'.join((root / 'Tests' / name).read_text() for name in ['LibraryTests.swift', 'BulletTests.swift', 'ImageDropTests.swift', 'GridTests.swift', 'FormattingTests.swift', 'InteractionTests.swift', 'GridRenderingTests.swift', 'GridStartupTests.swift']).replace('UserDefaults.standard', 'UserDefaults(suiteName: \"StickyNotes.LibraryTests\")!'))
     controller = (root / 'Sources/StickyNotes/LibraryController.swift').read_text().replace('UserDefaults.standard', 'UserDefaults(suiteName: \"StickyNotes.LibraryTests\")!')
     (temp / 'LibraryController.swift').write_text(controller)
     binary = temp / 'tests'
