@@ -88,22 +88,25 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 - Hover over a group row to reveal its **⋯** menu for renaming or deleting it. These actions are also available with a right-click.
 - Create notes directly in the selected group, or move existing notes between groups.
 - Deleting a group keeps its notes in **Ungrouped**. Empty groups delete without a confirmation prompt.
-- A distinct sidebar background, readable folder icons, and a subtle selection with a highlighted name and icon.
-- Matching buttons for adding a group and showing or hiding the sidebar, placed together above the list.
+- An inset sidebar with rounded corners, readable folder icons, and a subtle selection with a highlighted name and icon.
+- Matching buttons for adding a group and showing or hiding the sidebar, beside the macOS window controls.
 - Smooth opening and closing animations that respect the macOS **Reduce motion** setting. The app remembers whether the sidebar is hidden.
 - Groups and note membership are saved locally and restored when you reopen the app.
 
 ### Rich text, without a separate document app
 
-- Choose installed fonts from a dropdown in each note, with **bold**, underline, and bullet insertion.
+- Choose installed fonts from a dropdown in each note, with **bold** and underline.
 - Font changes preserve existing text sizes and styles; select text to format it or choose a font for what you type next.
-- Press **Enter** in a bulleted item to continue the list automatically; press **Enter** on an empty item to end it.
+- Start a bulleted or numbered list from the note toolbar. Press **Enter** to continue the list, or press **Enter** on an empty item to end it.
+- Inserting an item in the middle of a numbered list renumbers the following items in that list.
 - **Text, H1, H2, and H3** styles.
 - **Left, center, and right alignment**, with separate **LTR/RTL** writing-direction controls.
+- Choosing **RTL** also right-aligns the current paragraph so typing starts on the right; **LTR** starts on the left. You can then choose a different alignment separately.
 - Alignment and font controls work in either column.
 - **One or two continuous text columns** sharing the same document.
 - Click an empty second column to start writing there. Switching back to one column brings all text together in order.
-- Standard copy, cut, paste, select-all, and text undo shortcuts.
+- Paste text with **⌘V** to match the formatting at the insertion point. Pasted images remain embedded images.
+- Standard copy, cut, select-all, and text undo shortcuts.
 
 ### Images inside your notes
 
@@ -116,7 +119,8 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 ### Make it feel right
 
 - Choose **Light**, **Dark**, or **System** in Settings. System follows macOS automatically; your choice is saved and applies to existing and new windows.
-- Window opacity from **25% to 100%**.
+- Adjust **Color intensity** from **0% to 100%** in Settings, from subtle to vivid colors. The saved preference updates open notes, List/Grid cards, and color swatches immediately.
+- Window opacity from **25% to 100%**, controlled independently of color intensity.
 - **Keep note above** is saved independently for each note.
 - Persistent defaults for new notes: font family, font size, color, and writing direction.
 - Color swatches beside color names.

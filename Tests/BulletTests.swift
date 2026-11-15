@@ -104,3 +104,72 @@ rightEditor.insertNewline(nil)
 assert(rightEditor.string == "• First column\u{000c}• ستون دوم\n• ")
 twoColumnWindow.close()
 print("PASS: second-column toolbar bullet placement; visible glyph container; column-break list continuation/exit; focus restoration; empty column and Persian typing")
+
+// Numbered lists use the same column-aware editing as bullets.
+assertBulletReturn("1. First", expected: "1. First\n2. ")
+assertBulletReturn("  9. خرید نان", expected: "  9. خرید نان\n  10. ")
+assertBulletReturn("1. First\n2. ", expected: "1. First\n")
+assertBulletReturn("First\u{000c}3. Second", expected: "First\u{000c}3. Second\n4. ")
+assertBulletReturn("3.14 is pi", expected: "3.14 is pi\n")
+assertBulletReturn("1. First\n2.", expected: "1. First\n")
+
+var numberedNote = Note()
+numberedNote.columnCount = 2
+let numberedContent = NSAttributedString(string: "Left\u{000c}• Right")
+numberedNote.richText = numberedContent.rtfd(from: NSRange(location: 0, length: numberedContent.length), documentAttributes: [:])!
+Store.shared.notes.append(numberedNote)
+let numberedWindow = NoteWindow(note: numberedNote)
+let numberedEditor = numberedWindow.flow.secondary
+numberedWindow.window!.makeFirstResponder(numberedEditor)
+numberedEditor.setSelectedRange(NSRange(location: numberedContent.length, length: 0))
+numberedWindow.numberedItem()
+numberedWindow.numberedItem()
+assert(numberedEditor.string == "Left\u{000c}1. Right")
+numberedEditor.undoManager!.removeAllActions()
+numberedEditor.insertNewline(nil)
+assert(numberedEditor.string == "Left\u{000c}1. Right\n2. ")
+let savedNumberedNote = Store.shared.notes.first { $0.id == numberedNote.id }!
+assert(NSAttributedString(rtfd: savedNumberedNote.richText, documentAttributes: nil)?.string == numberedEditor.string)
+numberedEditor.undoManager!.undo()
+assert(numberedEditor.string == "Left\u{000c}1. Right")
+numberedWindow.close()
+print("PASS: numbered-list toolbar, continuation and exit, Persian text, second column, autosave and undo")
+
+// Inserting between items shifts the rest of that list, including digit-width changes.
+assertBulletReturn("8. Eight\n9. Nine\n10. Ten\n\n1. Separate",
+                   selection: NSRange(location: 8, length: 0),
+                   expected: "8. Eight\n9. \n10. Nine\n11. Ten\n\n1. Separate", caret: 12)
+assertBulletReturn("1. Alpha beta\n2. Next\u{000c}1. Other column",
+                   selection: NSRange(location: 9, length: 0),
+                   expected: "1. Alpha \n2. beta\n3. Next\u{000c}1. Other column")
+assertBulletReturn("1. A\r\n2. B", selection: NSRange(location: 4, length: 0),
+                   expected: "1. A\n2. \r\n3. B")
+
+let middleNote = Note()
+Store.shared.notes.append(middleNote)
+let middleWindow = NoteWindow(note: middleNote)
+let middleEditor = middleWindow.primaryEditor
+let middleSource = "8. A\n9. B\n10. C"
+middleEditor.string = middleSource
+middleEditor.textStorage!.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
+                                       range: NSRange(location: 5, length: 4))
+middleEditor.setSelectedRange(NSRange(location: 4, length: 0))
+middleEditor.undoManager!.removeAllActions()
+middleEditor.insertNewline(nil)
+let middleResult = "8. A\n9. \n10. B\n11. C"
+assert(middleEditor.string == middleResult)
+assert(middleEditor.selectedRange().location == 8)
+assert(middleEditor.textStorage!.attribute(.underlineStyle, at: 9, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue)
+middleEditor.undoManager!.undo()
+assert(middleEditor.string == middleSource, middleEditor.string)
+middleEditor.undoManager!.redo()
+assert(middleEditor.string == middleResult, middleEditor.string)
+let middleSaved = Store.shared.notes.first { $0.id == middleNote.id }!
+assert(NSAttributedString(rtfd: middleSaved.richText, documentAttributes: nil)?.string == middleResult)
+
+middleEditor.string = "1. First\nNew item\n2. Last"
+middleEditor.setSelectedRange(NSRange(location: 10, length: 0))
+middleWindow.numberedItem()
+assert(middleEditor.string == "1. First\n2. New item\n3. Last")
+middleWindow.close()
+print("PASS: numbered items renumber after middle insertion; caret, styles, save and grouped undo/redo; list and column boundaries")

@@ -11,9 +11,14 @@ final class LibrarySurface: NSView {
     override func draw(_ dirtyRect: NSRect) {
         if isSidebar {
             let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            NSColor(calibratedWhite: dark ? 0.13 : 0.94, alpha: 1).setFill(); bounds.fill()
-            NSColor.separatorColor.setFill()
-            NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
+            NSColor.clear.setFill(); dirtyRect.fill(using: .copy)
+            let panel = NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 6), xRadius: 22, yRadius: 22)
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.16 : 0.06)
+            shadow.shadowBlurRadius = 8; shadow.shadowOffset = NSSize(width: 0, height: -1); shadow.set()
+            NSColor(calibratedWhite: dark ? 0.13 : 0.975, alpha: 1).setFill(); panel.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSColor.white.withAlphaComponent(dark ? 0.1 : 0.9).setStroke(); panel.lineWidth = 1; panel.stroke()
         } else { fill.setFill(); bounds.fill() }
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
@@ -79,8 +84,8 @@ class NoteCard: NSView {
         NSColor.clear.setFill(); dirtyRect.fill(using: .copy)
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 3), xRadius: 11, yRadius: 11)
-        (tint.blended(withFraction: dark ? 0.77 : 0.58, of: dark ? .black : .white) ?? tint).setFill(); card.fill()
-        tint.blended(withFraction: 0.18, of: .gray)?.setFill()
+        NoteColors.card(tint, dark: dark).setFill(); card.fill()
+        NoteColors.color(tint).blended(withFraction: 0.18, of: .gray)?.setFill()
         NSBezierPath(roundedRect: NSRect(x: 10, y: 14, width: 4, height: bounds.height - 28), xRadius: 2, yRadius: 2).fill()
         if selected { NSColor.controlAccentColor.withAlphaComponent(0.7).setStroke(); card.lineWidth = 1.3; card.stroke() }
     }
@@ -108,7 +113,7 @@ final class GroupCell: NSView {
     func updateStyle() {
         actionsButton?.isHidden = !hovered
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let accent = dark ? NSColor.systemYellow : NSColor(calibratedRed: 0.68, green: 0.43, blue: 0, alpha: 1)
+        let accent = dark ? NSColor.systemYellow : NSColor(calibratedRed: 1, green: 0.65, blue: 0, alpha: 1)
         nameField.textColor = selected ? accent : .labelColor
         nameField.font = .systemFont(ofSize: 16, weight: selected ? .medium : .regular)
         folderImage.contentTintColor = selected ? accent : .labelColor
@@ -223,6 +228,8 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
     let sidebar = LibrarySurface()
     let main = LibrarySurface()
     let restoreSidebar = NSButton()
+    private var groupHeader: NSStackView!
+    private var titlebarControls: NSTitlebarAccessoryViewController?
     var sidebarWidth: NSLayoutConstraint!
     var mainWithSidebar: NSLayoutConstraint!
     var sidebarLeading: NSLayoutConstraint!
@@ -253,19 +260,25 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         for panel in [sidebar, main] { panel.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(panel) }
         view.wantsLayer = true; view.layer?.masksToBounds = true
         sidebar.isSidebar = true; main.fill = .textBackgroundColor
+        (view as? LibrarySurface)?.fill = .textBackgroundColor
+        sidebar.wantsLayer = true
+        sidebar.layer?.cornerRadius = 22
+        sidebar.layer?.cornerCurve = .continuous
+        sidebar.layer?.masksToBounds = true
         sidebarWidth = sidebar.widthAnchor.constraint(equalToConstant: 260)
         mainWithSidebar = main.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor)
         sidebarLeading = sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
         NSLayoutConstraint.activate([sidebarLeading, sidebar.topAnchor.constraint(equalTo: view.topAnchor), sidebar.bottomAnchor.constraint(equalTo: view.bottomAnchor), sidebarWidth,
-            mainWithSidebar, main.topAnchor.constraint(equalTo: view.topAnchor), main.trailingAnchor.constraint(equalTo: view.trailingAnchor), main.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+            mainWithSidebar, main.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), main.trailingAnchor.constraint(equalTo: view.trailingAnchor), main.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
         let groupTitle = NSTextField(labelWithString: "Groups"); groupTitle.font = .systemFont(ofSize: 13, weight: .semibold); groupTitle.textColor = .secondaryLabelColor
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let groupHeader = row([spacer, icon("folder.badge.plus", label: "New group", action: #selector(newGroup)), icon("sidebar.left", label: "Toggle sidebar", action: #selector(toggleSidebar))])
+        groupHeader = row([spacer, icon("folder.badge.plus", label: "New group", action: #selector(newGroup)), icon("sidebar.left", label: "Toggle sidebar", action: #selector(toggleSidebar))])
         groupHeader.spacing = 6
         let groupScroll = setupTable(groupsTable, rowHeight: 40)
         groupsTable.action = #selector(groupClicked); groupsTable.target = self
         let context = NSMenu(); context.delegate = self; groupsTable.menu = context
         let groupStack = NSStackView(views: [groupHeader, groupTitle, groupScroll]); groupStack.orientation = .vertical; groupStack.alignment = .leading; groupStack.spacing = 6
+        groupStack.setCustomSpacing(12, after: groupHeader)
         layout(groupStack, in: sidebar, topInset: 6)
         groupHeader.widthAnchor.constraint(equalTo: groupStack.widthAnchor).isActive = true
         groupScroll.widthAnchor.constraint(equalTo: groupStack.widthAnchor).isActive = true
@@ -318,6 +331,36 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         setDisplayMode(LibraryDisplayMode(rawValue: UserDefaults.standard.string(forKey: "libraryDisplayMode") ?? "") ?? .list)
         reload()
     }
+    func installTitlebarControls(on window: NSWindow) {
+        guard titlebarControls == nil, let stack = groupHeader.superview as? NSStackView else { return }
+        // Use a native titlebar accessory so the controls remain clickable above
+        // the sidebar background, beside the standard macOS window buttons.
+        stack.removeArrangedSubview(groupHeader); groupHeader.removeFromSuperview()
+        let spacer = NSView(); spacer.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        stack.insertArrangedSubview(spacer, at: 0)
+        stack.setCustomSpacing(12, after: spacer)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .left
+        accessory.view = NSView(frame: NSRect(x: 0, y: 0, width: 166, height: 32))
+        accessory.view.addSubview(groupHeader)
+        NSLayoutConstraint.activate([
+            groupHeader.leadingAnchor.constraint(equalTo: accessory.view.leadingAnchor),
+            groupHeader.trailingAnchor.constraint(equalTo: accessory.view.trailingAnchor),
+            groupHeader.centerYAnchor.constraint(equalTo: accessory.view.centerYAnchor)
+        ])
+        window.addTitlebarAccessoryViewController(accessory)
+        titlebarControls = accessory
+        accessory.view.isHidden = !isSidebarVisible
+        positionWindowButtons()
+    }
+    private func positionWindowButtons() {
+        guard titlebarControls != nil, let window = view.window else { return }
+        for (index, type) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
+            guard let button = window.standardWindowButton(type), let parent = button.superview else { continue }
+            let x = view.convert(NSPoint(x: 22 + CGFloat(index) * 23, y: 0), to: parent).x
+            if button.frame.minX != x { button.setFrameOrigin(NSPoint(x: x, y: button.frame.minY)) }
+        }
+    }
     private func configureGrid() {
         gridLayout.minimumInteritemSpacing = 12; gridLayout.minimumLineSpacing = 12
         gridLayout.itemSize = NSSize(width: 200, height: 180)
@@ -341,7 +384,7 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         gridScroll.hasVerticalScroller = true; gridScroll.hasHorizontalScroller = false
         gridScroll.autohidesScrollers = true; gridScroll.drawsBackground = false
     }
-    override func viewDidLayout() { super.viewDidLayout(); updateGridLayout() }
+    override func viewDidLayout() { super.viewDidLayout(); updateGridLayout(); positionWindowButtons() }
     func updateGridLayout() {
         guard isViewLoaded else { return }
         gridLayout.updateItemSize(for: gridScroll.contentView.bounds.width)
@@ -445,7 +488,7 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let total = Store.shared.notes.filter { matches($0, filter: item) }.count
         let count = cell.countField
-        count.stringValue = "\(total)"; count.textColor = .secondaryLabelColor; count.font = .monospacedDigitSystemFont(ofSize: 15, weight: .regular)
+        count.stringValue = "\(total)"; count.textColor = .tertiaryLabelColor; count.font = .monospacedDigitSystemFont(ofSize: 15, weight: .regular)
         count.alignment = .right
         count.setAccessibilityLabel("\(total) notes")
         count.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -479,6 +522,12 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
             filter = filters[groupsTable.selectedRow]; reload()
         } else { updateSelection() }
     }
+    func refreshNoteColors() {
+        for row in 0..<notesTable.numberOfRows {
+            (notesTable.view(atColumn: 0, row: row, makeIfNecessary: false) as? NoteCard)?.needsDisplay = true
+        }
+        for item in notesGrid.visibleItems() { item.view.needsDisplay = true }
+    }
     func updateSelection() {
         guard !syncingSelection else { return }
         syncingSelection = true; defer { syncingSelection = false }
@@ -504,6 +553,7 @@ final class LibraryController: NSViewController, NSTableViewDataSource, NSTableV
         isSidebarAnimating = false
         view.layoutSubtreeIfNeeded()
         sidebar.isHidden = false
+        titlebarControls?.view.isHidden = !isSidebarVisible
         restoreSidebar.isHidden = isSidebarVisible
         let target: CGFloat = isSidebarVisible ? 0 : -sidebarWidth.constant
         if animated && view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {

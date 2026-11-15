@@ -56,7 +56,7 @@ for mode in [AppAppearanceMode.dark, .light, .system] {
         assert(NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == expected)
         assert(themeLibraryWindow.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == expected)
         assert(themeWindow.window!.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == expected)
-        assert(themeWindow.window!.backgroundColor == (mode == .dark ? NSColor(calibratedWhite: 0.18, alpha: 1) : palette[0]))
+        assert(themeWindow.window!.backgroundColor == NoteColors.paper(0, dark: mode == .dark))
         let newThemeWindow = NoteWindow(note: interactionNote)
         assert(newThemeWindow.window!.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == expected)
         newThemeWindow.close()

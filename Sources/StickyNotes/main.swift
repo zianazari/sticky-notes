@@ -37,11 +37,40 @@ struct Note: Codable {
 }
 let palette: [NSColor] = [NSColor(red: 1, green: 0.93, blue: 0.64, alpha: 1), NSColor(red: 1, green: 0.79, blue: 0.82, alpha: 1), NSColor(red: 0.77, green: 0.91, blue: 0.78, alpha: 1), NSColor(red: 0.75, green: 0.87, blue: 1, alpha: 1), NSColor(red: 0.88, green: 0.80, blue: 1, alpha: 1)]
 
+enum NoteColors {
+    static var intensity: Double {
+        guard let value = UserDefaults.standard.object(forKey: "colorIntensity") as? NSNumber else { return 0.5 }
+        let number = value.doubleValue
+        return number.isFinite ? min(1, max(0, number)) : 0.5
+    }
+    static func color(_ base: NSColor) -> NSColor {
+        let amount = intensity
+        if amount == 0.5 { return base }
+        guard let rgb = base.usingColorSpace(.deviceRGB) else { return base }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        return NSColor(calibratedHue: hue, saturation: min(0.9, saturation * amount * 2), brightness: brightness, alpha: 1)
+    }
+    static func paper(_ index: Int, dark: Bool) -> NSColor {
+        let tint = color(palette[min(max(index, 0), palette.count - 1)])
+        if dark {
+            let neutral = NSColor(calibratedWhite: 0.18, alpha: 1)
+            return neutral.blended(withFraction: intensity * 0.22, of: tint) ?? neutral
+        }
+        return tint
+    }
+    static func card(_ base: NSColor, dark: Bool) -> NSColor {
+        let tint = color(base)
+        let fade = dark ? 0.77 : min(1, max(0, 1.16 * (1 - intensity)))
+        return tint.blended(withFraction: fade, of: dark ? .black : .white) ?? tint
+    }
+}
+
 func populateColors(_ popup: NSPopUpButton) {
     popup.removeAllItems()
     popup.addItems(withTitles: ["Yellow", "Rose", "Sage", "Sky", "Lavender"])
     for (index, item) in popup.itemArray.enumerated() {
-        let color = palette[index]
+        let color = NoteColors.color(palette[index])
         let image = NSImage(size: NSSize(width: 22, height: 14), flipped: false) { rect in
             color.setFill()
             let swatch = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 2, yRadius: 2)
@@ -117,6 +146,25 @@ final class Store {
         catch { let alert = NSAlert(); alert.messageText = "Could not save notes"; alert.informativeText = error.localizedDescription; alert.runModal() }
     }
 }
+func writingDirectionIcon(rightToLeft: Bool) -> NSImage {
+    let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
+        let path = NSBezierPath(); path.lineWidth = 1.5; path.lineCapStyle = .round; path.lineJoinStyle = .round
+        // A directional arrow above text lines distinguishes direction from alignment.
+        path.move(to: NSPoint(x: 3, y: 14)); path.line(to: NSPoint(x: 19, y: 14))
+        let tip: CGFloat = rightToLeft ? 3 : 19
+        let tail: CGFloat = rightToLeft ? 6 : 16
+        path.move(to: NSPoint(x: tail, y: 17)); path.line(to: NSPoint(x: tip, y: 14)); path.line(to: NSPoint(x: tail, y: 11))
+        for (y, length) in [(7.0, 16.0), (3.0, 11.0)] {
+            let start = rightToLeft ? 19 - length : 3
+            path.move(to: NSPoint(x: start, y: y)); path.line(to: NSPoint(x: start + length, y: y))
+        }
+        NSColor.black.setStroke(); path.stroke(); return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = rightToLeft ? "Write right to left" : "Write left to right"
+    return image
+}
+
 func button(_ title: String, _ target: AnyObject, _ action: Selector) -> NSButton {
     let b = NSButton(title: title, target: target, action: action); b.bezelStyle = .rounded; return b
 }
@@ -129,6 +177,48 @@ func layout(_ stack: NSStackView, in view: NSView, topInset: CGFloat = 16) {
 }
 // Text attachments use the same selection and undo-aware deletion as ordinary text.
 final class NoteTextView: NSTextView {
+    override func paste(_ sender: Any?) {
+        let board = NSPasteboard.general
+        if !pastePlainText(board.string(forType: .string), richData: board.data(forType:)) {
+            super.paste(sender)
+        }
+    }
+
+    @discardableResult
+    func pastePlainText(_ plainText: String?, richData: (NSPasteboard.PasteboardType) -> Data?) -> Bool {
+        guard isEditable else { return false }
+        // Use the plain representation when available. Some sources only
+        // advertise rich text, so decode it and discard its attributes.
+        let text = plainText ?? richClipboardText(readData: richData)
+        guard let text, !text.isEmpty else { return false }
+        let plain = text.replacingOccurrences(of: "\u{FFFC}", with: "")
+        // Let AppKit handle image-only clipboard contents as attachments.
+        if plain != text && plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return false
+        }
+        var attributes = typingAttributes
+        attributes.removeValue(forKey: .attachment)
+        breakUndoCoalescing()
+        insertText(NSAttributedString(string: plain, attributes: attributes), replacementRange: selectedRange())
+        breakUndoCoalescing()
+        return true
+    }
+
+    private func richClipboardText(readData: (NSPasteboard.PasteboardType) -> Data?) -> String? {
+        let richTypes: [(NSPasteboard.PasteboardType, NSAttributedString.DocumentType)] = [
+            (.rtfd, .rtfd), (.rtf, .rtf), (.html, .html)
+        ]
+        for (type, documentType) in richTypes {
+            if let data = readData(type),
+               let content = try? NSAttributedString(data: data, options: [.documentType: documentType],
+                                                      documentAttributes: nil),
+               !content.string.isEmpty {
+                return content.string
+            }
+        }
+        return nil
+    }
+
     var appearanceDidChange: (() -> Void)?
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -155,15 +245,121 @@ final class NoteTextView: NSTextView {
         if nextBreak.location != NSNotFound { contentsEnd = nextBreak.location }
         return NSRange(location: start, length: contentsEnd - start)
     }
-    func insertBullet() {
+    private static let listPrefix = try! NSRegularExpression(pattern: "^([\\t ]*)(?:•[\\t ]*|([0-9]+)\\.(?:[\\t ]+|$))")
+
+    func insertBullet() { insertListMarker("• ") }
+    func insertNumberedItem() { insertListMarker("1. ", numbered: true) }
+
+    private func listMatch(in line: NSString) -> NSTextCheckingResult? {
+        Self.listPrefix.firstMatch(in: line as String, range: NSRange(location: 0, length: line.length))
+    }
+
+    private func insertListMarker(_ marker: String, numbered: Bool = false) {
         guard isEditable, !hasMarkedText() else { return }
+        let text = string as NSString
         let selection = selectedRange()
-        guard selection.location != NSNotFound, NSMaxRange(selection) <= (string as NSString).length else { return }
+        guard selection.location != NSNotFound, NSMaxRange(selection) <= text.length else { return }
         let paragraph = listParagraphRange(at: selection.location)
+        var markerRange = NSRange(location: paragraph.location, length: 0)
+        var marker = marker
+        var number = 1
+        var indent = ""
+        if numbered {
+            let line = text.substring(with: paragraph) as NSString
+            let leadingSpace = line.range(of: "^[\\t ]*", options: .regularExpression)
+            indent = line.substring(with: leadingSpace)
+            markerRange.location += leadingSpace.length
+            if let existing = listMatch(in: line) {
+                if existing.range(at: 2).location != NSNotFound { return }
+                markerRange.length = existing.range.length - leadingSpace.length
+            }
+            if let previousEnd = previousListLineEnd(before: paragraph.location, in: text) {
+                let previousLine = text.substring(with: listParagraphRange(at: previousEnd)) as NSString
+                if let previous = listMatch(in: previousLine), previous.range(at: 2).location != NSNotFound,
+                   previousLine.substring(with: previous.range(at: 1)) == indent,
+                   let previousNumber = Int(previousLine.substring(with: previous.range(at: 2))), previousNumber < Int.max {
+                    number = previousNumber + 1
+                }
+            }
+            marker = "\(number). "
+        }
+        editList(groupUndo: numbered) {
+            insertText(marker, replacementRange: markerRange)
+            let newMarkerEnd = markerRange.location + marker.utf16.count
+            let offset = newMarkerEnd - NSMaxRange(markerRange)
+            let start = max(newMarkerEnd, selection.location + offset)
+            let end = max(start, NSMaxRange(selection) + offset)
+            setSelectedRange(NSRange(location: start, length: end - start))
+            if numbered { renumberFollowingItems(after: newMarkerEnd, number: number, indent: indent) }
+        }
+    }
+
+    private func editList(groupUndo: Bool, changes: () -> Void) {
         breakUndoCoalescing()
-        insertText("• ", replacementRange: NSRange(location: paragraph.location, length: 0))
-        setSelectedRange(NSRange(location: selection.location + 2, length: selection.length))
+        let undo = groupUndo ? undoManager : nil
+        undo?.beginUndoGrouping()
+        changes()
         breakUndoCoalescing()
+        undo?.endUndoGrouping()
+    }
+
+    private func listLineBreakLength(at index: Int, in text: NSString) -> Int {
+        guard index < text.length, let scalar = UnicodeScalar(text.character(at: index)),
+              scalar.value != 0x0C, CharacterSet.newlines.contains(scalar) else { return 0 }
+        return scalar.value == 0x0D && index + 1 < text.length && text.character(at: index + 1) == 0x0A ? 2 : 1
+    }
+
+    private func previousListLineEnd(before start: Int, in text: NSString) -> Int? {
+        guard start > 0 else { return nil }
+        if start > 1 && listLineBreakLength(at: start - 2, in: text) == 2 { return start - 2 }
+        return listLineBreakLength(at: start - 1, in: text) == 1 ? start - 1 : nil
+    }
+
+    private func renumberFollowingItems(after location: Int, number: Int, indent: String) {
+        guard let storage = textStorage else { return }
+        let text = storage.string as NSString
+        var lineEnd = NSMaxRange(listParagraphRange(at: location))
+        var nextNumber = number
+        var changes: [(range: NSRange, digits: String)] = []
+        while nextNumber < Int.max {
+            let separatorLength = listLineBreakLength(at: lineEnd, in: text)
+            guard separatorLength > 0, lineEnd + separatorLength < text.length else { break }
+            let lineRange = listParagraphRange(at: lineEnd + separatorLength)
+            let line = text.substring(with: lineRange) as NSString
+            guard let match = listMatch(in: line), match.range(at: 2).location != NSNotFound,
+                  line.substring(with: match.range(at: 1)) == indent else { break }
+            nextNumber += 1
+            let digits = String(nextNumber)
+            let numberRange = match.range(at: 2)
+            if line.substring(with: numberRange) != digits {
+                changes.append((NSRange(location: lineRange.location + numberRange.location, length: numberRange.length), digits))
+            }
+            lineEnd = NSMaxRange(lineRange)
+        }
+        guard !changes.isEmpty else { return }
+        let selection = selectedRange()
+        guard shouldChangeText(inRanges: changes.map { NSValue(range: $0.range) },
+                               replacementStrings: changes.map(\.digits)) else { return }
+        func adjustedPosition(_ position: Int) -> Int {
+            var shift = 0
+            for change in changes {
+                guard position > change.range.location else { break }
+                let newLength = change.digits.utf16.count
+                if position < NSMaxRange(change.range) {
+                    return change.range.location + shift + min(position - change.range.location, newLength)
+                }
+                shift += newLength - change.range.length
+            }
+            return position + shift
+        }
+        storage.beginEditing()
+        for change in changes.reversed() {
+            storage.replaceCharacters(in: change.range, with: change.digits)
+        }
+        storage.endEditing()
+        let start = adjustedPosition(selection.location)
+        setSelectedRange(NSRange(location: start, length: adjustedPosition(NSMaxRange(selection)) - start))
+        didChangeText()
     }
     override func insertNewline(_ sender: Any?) {
         guard isEditable, !hasMarkedText() else { super.insertNewline(sender); return }
@@ -173,21 +369,34 @@ final class NoteTextView: NSTextView {
         let paragraphRange = listParagraphRange(at: selection.location)
         let start = paragraphRange.location, contentsEnd = NSMaxRange(paragraphRange)
         let paragraph = text.substring(with: paragraphRange) as NSString
-        let prefixRange = paragraph.range(of: "^[\\t ]*•[\\t ]*", options: .regularExpression)
-        guard prefixRange.location == 0,
-              selection.location >= start + prefixRange.length,
+        guard let match = listMatch(in: paragraph),
+              selection.location >= start + match.range.length,
               NSMaxRange(selection) <= contentsEnd else { super.insertNewline(sender); return }
-        let prefix = paragraph.substring(with: prefixRange)
-        let content = paragraph.substring(from: prefixRange.length)
-        breakUndoCoalescing()
-        if content.trimmingCharacters(in: .whitespaces).isEmpty {
-            // An empty item ends the list without leaving a stray bullet behind.
-            insertText("", replacementRange: NSRange(location: start, length: contentsEnd - start))
-        } else {
-            // A single editor operation preserves typing style, undo, and autosave.
-            insertText("\n" + prefix, replacementRange: selection)
+        let content = paragraph.substring(from: match.range.length)
+        let isEmptyItem = content.trimmingCharacters(in: .whitespaces).isEmpty
+        var nextPrefix = paragraph.substring(with: match.range)
+        let numberRange = match.range(at: 2)
+        var nextNumber: Int?
+        if numberRange.location != NSNotFound && !isEmptyItem {
+            guard let number = Int(paragraph.substring(with: numberRange)), number < Int.max else {
+                super.insertNewline(sender)
+                return
+            }
+            nextNumber = number + 1
+            nextPrefix = (nextPrefix as NSString).replacingCharacters(in: numberRange, with: String(number + 1))
         }
-        breakUndoCoalescing()
+        editList(groupUndo: nextNumber != nil) {
+            if isEmptyItem {
+                // An empty item ends the list without leaving a marker behind.
+                insertText("", replacementRange: NSRange(location: start, length: contentsEnd - start))
+            } else {
+                insertText("\n" + nextPrefix, replacementRange: selection)
+                if let nextNumber {
+                    renumberFollowingItems(after: selectedRange().location, number: nextNumber,
+                                           indent: paragraph.substring(with: match.range(at: 1)))
+                }
+            }
+        }
     }
     var prepareEmptyColumn: (() -> Bool)?
     var resizeOrigin: NSRect?
@@ -514,13 +723,17 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         alignmentControl.setAccessibilityLabel("Text alignment")
         alignmentControl.target = self; alignmentControl.action = #selector(alignmentChanged(_:))
         directionControl.segmentCount = 2; directionControl.trackingMode = .selectOne
-        for (index, label) in ["LTR", "RTL"].enumerated() {
-            directionControl.setLabel(label, forSegment: index); directionControl.setWidth(34, forSegment: index)
+        for index in 0..<2 {
+            directionControl.setImage(writingDirectionIcon(rightToLeft: index == 1), forSegment: index)
+            directionControl.setWidth(28, forSegment: index)
             directionControl.setToolTip(index == 0 ? "Write left to right" : "Write right to left", forSegment: index)
         }
         directionControl.setAccessibilityLabel("Writing direction")
         directionControl.target = self; directionControl.action = #selector(directionChanged(_:))
-        let controls = row([heading, fontPicker, button("B", self, #selector(bold)), button("U", self, #selector(underline)), button("•", self, #selector(bullet))])
+        let numberedList = button("1.", self, #selector(numberedItem))
+        numberedList.toolTip = "Numbered list"
+        numberedList.setAccessibilityLabel("Numbered list")
+        let controls = row([heading, fontPicker, button("B", self, #selector(bold)), button("U", self, #selector(underline)), button("•", self, #selector(bullet)), numberedList])
         keepAboveToggle.state = note.keepAbove == true ? .on : .off
         keepAboveToggle.target = self; keepAboveToggle.action = #selector(changeKeepAbove)
         columns.addItems(withTitles: ["1 column", "2 columns"])
@@ -561,9 +774,19 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     func applyPreferences() { window?.level = keepAboveToggle.state == .on ? .floating : .normal; window?.alphaValue = UserDefaults.standard.double(forKey: "opacity"); paint() }
     func paint() {
         let dark = primaryEditor.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let c = dark ? NSColor(calibratedWhite: 0.18, alpha: 1) : palette[colors.indexOfSelectedItem]
-        window?.backgroundColor = c
-        for view in [primaryEditor, flow.secondary] { view.backgroundColor = c; view.textColor = dark ? .white : .black }
+        refreshPaperColor()
+        for view in [primaryEditor, flow.secondary] { view.textColor = dark ? .white : .black }
+    }
+    func refreshPaperColor() {
+        let dark = primaryEditor.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let background = NoteColors.paper(colors.indexOfSelectedItem, dark: dark)
+        window?.backgroundColor = background
+        for view in [primaryEditor, flow.secondary] { view.backgroundColor = background }
+    }
+    func refreshColorIntensity() {
+        let selectedColor = colors.indexOfSelectedItem
+        populateColors(colors); colors.selectItem(at: selectedColor)
+        refreshPaperColor()
     }
     @objc func changeKeepAbove() {
         applyPreferences()
@@ -690,7 +913,10 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
     }
     @objc func directionChanged(_ sender: NSSegmentedControl) {
         let direction: NSWritingDirection = sender.selectedSegment == 1 ? .rightToLeft : .leftToRight
-        setParagraphStyle { $0.baseWritingDirection = direction }
+        setParagraphStyle {
+            $0.baseWritingDirection = direction
+            $0.alignment = direction == .rightToLeft ? .right : .left
+        }
     }
     @objc func bold() {
         let range = editor.selectedRange()
@@ -708,6 +934,11 @@ final class NoteWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate
         let active = editor
         window?.makeFirstResponder(active)
         active.insertBullet()
+    }
+    @objc func numberedItem() {
+        let active = editor
+        window?.makeFirstResponder(active)
+        active.insertNumberedItem()
     }
     @objc func headingChanged(_ sender: NSPopUpButton) {
         let size: CGFloat = [UserDefaults.standard.double(forKey: "size"), 30, 24, 20][sender.indexOfSelectedItem]
@@ -739,6 +970,8 @@ final class App: NSObject, NSApplicationDelegate {
     let rtlToggle = NSButton(checkboxWithTitle: "Right-to-left for new notes", target: nil, action: nil)
     let opacity = NSSlider(value: 1, minValue: 0.25, maxValue: 1, target: nil, action: nil)
     let opacityLabel = NSTextField(labelWithString: "")
+    let colorIntensity = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let colorIntensityLabel = NSTextField(labelWithString: "50%")
     let font = NSPopUpButton()
     let size = NSPopUpButton()
     let color = NSPopUpButton()
@@ -764,12 +997,13 @@ final class App: NSObject, NSApplicationDelegate {
         let editItem = NSMenuItem(); menu.addItem(editItem); let edit = NSMenu(title: "Edit"); editItem.submenu = edit
         for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key) }
         NSApp.mainMenu = menu
-        library = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        library = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         library.isReleasedWhenClosed = false; library.title = ""; library.titleVisibility = .hidden
         library.titlebarAppearsTransparent = true; library.titlebarSeparatorStyle = .none
         library.minSize = NSSize(width: 720, height: 420)
         libraryController = LibraryController()
         library.contentViewController = libraryController
+        libraryController.installTitlebarControls(on: library)
         library.center(); library.setFrameAutosaveName("MyNotesLibrary")
         library.appearance = AppAppearanceMode.current.appearance
         showLibrary(); NSApp.activate(ignoringOtherApps: true)
@@ -813,19 +1047,40 @@ final class App: NSObject, NSApplicationDelegate {
         windows.values.forEach { $0.window?.appearance = appearance; $0.paint() }
         library?.contentView?.needsDisplay = true
     }
+    func configureColorIntensity() {
+        colorIntensity.doubleValue = NoteColors.intensity
+        colorIntensity.isContinuous = true
+        colorIntensity.setAccessibilityLabel("Color intensity")
+        colorIntensity.toolTip = "Adjust note colors without changing window opacity"
+        colorIntensity.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
+        colorIntensityLabel.alignment = .right
+        colorIntensityLabel.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        colorIntensityLabel.stringValue = "\(Int((NoteColors.intensity * 100).rounded()))%"
+        colorIntensity.target = self; colorIntensity.action = #selector(colorIntensityChanged(_:))
+    }
+    @objc func colorIntensityChanged(_ sender: NSSlider) {
+        UserDefaults.standard.set(min(1, max(0, sender.doubleValue)), forKey: "colorIntensity")
+        colorIntensityLabel.stringValue = "\(Int((NoteColors.intensity * 100).rounded()))%"
+        windows.values.forEach { $0.refreshColorIntensity() }
+        libraryController?.refreshNoteColors()
+        if color.numberOfItems > 0 {
+            let selectedColor = color.indexOfSelectedItem
+            populateColors(color); color.selectItem(at: selectedColor)
+        }
+    }
     @objc func showSettings() {
         if let settings { settings.makeKeyAndOrderFront(nil); return }
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 450, height: 360), styleMask: [.titled, .closable], backing: .buffered, defer: false); w.title = "Settings"; w.isReleasedWhenClosed = false; w.center(); settings = w
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 470, height: 410), styleMask: [.titled, .closable], backing: .buffered, defer: false); w.title = "Settings"; w.isReleasedWhenClosed = false; w.center(); settings = w
         w.appearance = AppAppearanceMode.current.appearance
         let d = UserDefaults.standard
-        configureAppearancePicker()
+        configureAppearancePicker(); configureColorIntensity()
         rtlToggle.state = d.bool(forKey: "rtl") ? .on : .off
         font.addItems(withTitles: NSFontManager.shared.availableFontFamilies.sorted()); font.selectItem(withTitle: d.string(forKey: "font")!)
         size.addItems(withTitles: ["12", "14", "17", "20", "24", "28"]); size.selectItem(withTitle: String(Int(d.double(forKey: "size"))))
         populateColors(color); color.selectItem(at: d.integer(forKey: "color")); opacity.doubleValue = d.double(forKey: "opacity")
         for control: NSControl in [rtlToggle, font, size, color, opacity] { control.target = self; control.action = #selector(saveSettings) }
-        let hint = NSTextField(wrappingLabelWithString: "Version \(appVersion)\n\nFont, direction and color apply to new notes. Opacity applies to all open notes. Keep note above is set separately on each note. Changes are saved automatically.")
-        let stack = NSStackView(views: [row([NSTextField(labelWithString: "Appearance"), appearancePicker]), row([NSTextField(labelWithString: "Opacity"), opacity, opacityLabel]), row([NSTextField(labelWithString: "Font"), font, size]), row([NSTextField(labelWithString: "New note color"), color]), rtlToggle, hint]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18; layout(stack, in: w.contentView!); saveSettings(); w.makeKeyAndOrderFront(nil)
+        let hint = NSTextField(wrappingLabelWithString: "Version \(appVersion)\n\nFont, direction and color apply to new notes. Opacity and color intensity apply to all notes. Keep note above is set separately on each note. Changes are saved automatically.")
+        let stack = NSStackView(views: [row([NSTextField(labelWithString: "Appearance"), appearancePicker]), row([NSTextField(labelWithString: "Color intensity"), colorIntensity, colorIntensityLabel]), row([NSTextField(labelWithString: "Opacity"), opacity, opacityLabel]), row([NSTextField(labelWithString: "Font"), font, size]), row([NSTextField(labelWithString: "New note color"), color]), rtlToggle, hint]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18; layout(stack, in: w.contentView!); saveSettings(); w.makeKeyAndOrderFront(nil)
     }
     @objc func saveSettings() {
         let d = UserDefaults.standard; d.set(rtlToggle.state == .on, forKey: "rtl"); d.set(opacity.doubleValue, forKey: "opacity"); d.set(font.titleOfSelectedItem, forKey: "font"); d.set(Double(size.titleOfSelectedItem ?? "17")!, forKey: "size"); d.set(color.indexOfSelectedItem, forKey: "color"); opacityLabel.stringValue = "\(Int(opacity.doubleValue * 100))%"; windows.values.forEach { $0.applyPreferences() }
