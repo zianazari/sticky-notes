@@ -316,25 +316,35 @@ final class NoteTextView: NSTextView {
     }
 
     private func renumberFollowingItems(after location: Int, number: Int, indent: String) {
+        let text = string as NSString
+        let end = NSMaxRange(listParagraphRange(at: location))
+        let separatorLength = listLineBreakLength(at: end, in: text)
+        guard separatorLength > 0, number < Int.max else { return }
+        renumberItems(startingAt: end + separatorLength, number: number + 1, indent: indent)
+    }
+
+    private func renumberItems(startingAt location: Int, number: Int, indent: String) {
         guard let storage = textStorage else { return }
         let text = storage.string as NSString
-        var lineEnd = NSMaxRange(listParagraphRange(at: location))
+        var lineStart = location
         var nextNumber = number
         var changes: [(range: NSRange, digits: String)] = []
-        while nextNumber < Int.max {
-            let separatorLength = listLineBreakLength(at: lineEnd, in: text)
-            guard separatorLength > 0, lineEnd + separatorLength < text.length else { break }
-            let lineRange = listParagraphRange(at: lineEnd + separatorLength)
+        while lineStart < text.length {
+            let lineRange = listParagraphRange(at: lineStart)
+            guard lineRange.location == lineStart else { break }
             let line = text.substring(with: lineRange) as NSString
             guard let match = listMatch(in: line), match.range(at: 2).location != NSNotFound,
                   line.substring(with: match.range(at: 1)) == indent else { break }
-            nextNumber += 1
             let digits = String(nextNumber)
             let numberRange = match.range(at: 2)
             if line.substring(with: numberRange) != digits {
                 changes.append((NSRange(location: lineRange.location + numberRange.location, length: numberRange.length), digits))
             }
-            lineEnd = NSMaxRange(lineRange)
+            let lineEnd = NSMaxRange(lineRange)
+            let separatorLength = listLineBreakLength(at: lineEnd, in: text)
+            guard separatorLength > 0, nextNumber < Int.max else { break }
+            lineStart = lineEnd + separatorLength
+            nextNumber += 1
         }
         guard !changes.isEmpty else { return }
         let selection = selectedRange()
@@ -361,6 +371,90 @@ final class NoteTextView: NSTextView {
         setSelectedRange(NSRange(location: start, length: adjustedPosition(NSMaxRange(selection)) - start))
         didChangeText()
     }
+
+    override func deleteBackward(_ sender: Any?) {
+        deleteWithListUpdate(adjacentOffset: -1) { super.deleteBackward(sender) }
+    }
+
+    override func deleteForward(_ sender: Any?) {
+        deleteWithListUpdate(adjacentOffset: 0) { super.deleteForward(sender) }
+    }
+
+    override func delete(_ sender: Any?) {
+        deleteWithListUpdate { super.delete(sender) }
+    }
+
+    override func cut(_ sender: Any?) {
+        deleteWithListUpdate { super.cut(sender) }
+    }
+
+    private var updatingListDeletion = false
+
+    private func deleteWithListUpdate(adjacentOffset: Int? = nil, action: () -> Void) {
+        guard isEditable, !hasMarkedText(), !updatingListDeletion else { action(); return }
+        let text = string as NSString
+        var range = selectedRange()
+        if range.length == 0, let adjacentOffset, range.location != NSNotFound {
+            let index = range.location + adjacentOffset
+            if (0..<text.length).contains(index) { range = text.rangeOfComposedCharacterSequence(at: index) }
+        }
+        updateListAfterDeleting(range, action: action)
+    }
+
+    private func updateListAfterDeleting(_ range: NSRange, action: () -> Void) {
+        let text = string as NSString
+        guard range.location != NSNotFound, range.length > 0, NSMaxRange(range) <= text.length else {
+            action()
+            return
+        }
+
+        // Find the last affected marker and the first item that follows it.
+        var affected = listParagraphRange(at: NSMaxRange(range) - 1)
+        let line = text.substring(with: affected) as NSString
+        guard let marker = listMatch(in: line), marker.range(at: 2).location != NSNotFound else { action(); return }
+        let digits = marker.range(at: 2)
+        let markerRange = NSRange(location: affected.location + digits.location, length: digits.length + 1)
+        let end = NSMaxRange(affected)
+        let separatorLength = listLineBreakLength(at: end, in: text)
+        guard NSIntersectionRange(range, markerRange).length > 0, separatorLength > 0,
+              end + separatorLength < text.length,
+              let number = Int(line.substring(with: digits)) else { action(); return }
+        let following = end + separatorLength
+        let indent = line.substring(with: marker.range(at: 1))
+        var firstNumber = number
+        while range.location < affected.location,
+              let previousEnd = previousListLineEnd(before: affected.location, in: text) {
+            let previousRange = listParagraphRange(at: previousEnd)
+            let previous = text.substring(with: previousRange) as NSString
+            guard let match = listMatch(in: previous), match.range(at: 2).location != NSNotFound,
+                  previous.substring(with: match.range(at: 1)) == indent else { break }
+            let previousDigits = match.range(at: 2)
+            let previousMarker = NSRange(location: previousRange.location + previousDigits.location, length: previousDigits.length + 1)
+            guard NSIntersectionRange(range, previousMarker).length > 0,
+                  let previousNumber = Int(previous.substring(with: previousDigits)) else { break }
+            firstNumber = previousNumber
+            affected = previousRange
+        }
+
+        let expectedLength = text.length - range.length
+        updatingListDeletion = true
+        defer { updatingListDeletion = false }
+        editList(groupUndo: true) {
+            action()
+            let updated = string as NSString
+            guard updated.length == expectedLength else { return }
+            let nextStart = following - range.length
+            // If part of the first marker still forms a numbered item, count it.
+            if affected.location < nextStart {
+                let remaining = updated.substring(with: listParagraphRange(at: affected.location)) as NSString
+                if let match = listMatch(in: remaining), match.range(at: 2).location != NSNotFound {
+                    guard firstNumber < Int.max else { return }
+                    firstNumber += 1
+                }
+            }
+            renumberItems(startingAt: nextStart, number: firstNumber, indent: indent)
+        }
+    }
     override func insertNewline(_ sender: Any?) {
         guard isEditable, !hasMarkedText() else { super.insertNewline(sender); return }
         let text = string as NSString
@@ -385,16 +479,18 @@ final class NoteTextView: NSTextView {
             nextNumber = number + 1
             nextPrefix = (nextPrefix as NSString).replacingCharacters(in: numberRange, with: String(number + 1))
         }
+        if isEmptyItem {
+            // An empty item ends the list without leaving a marker behind.
+            updateListAfterDeleting(paragraphRange) {
+                editList(groupUndo: false) { insertText("", replacementRange: paragraphRange) }
+            }
+            return
+        }
         editList(groupUndo: nextNumber != nil) {
-            if isEmptyItem {
-                // An empty item ends the list without leaving a marker behind.
-                insertText("", replacementRange: NSRange(location: start, length: contentsEnd - start))
-            } else {
-                insertText("\n" + nextPrefix, replacementRange: selection)
-                if let nextNumber {
-                    renumberFollowingItems(after: selectedRange().location, number: nextNumber,
-                                           indent: paragraph.substring(with: match.range(at: 1)))
-                }
+            insertText("\n" + nextPrefix, replacementRange: selection)
+            if let nextNumber {
+                renumberFollowingItems(after: selectedRange().location, number: nextNumber,
+                                       indent: paragraph.substring(with: match.range(at: 1)))
             }
         }
     }

@@ -173,3 +173,42 @@ middleWindow.numberedItem()
 assert(middleEditor.string == "1. First\n2. New item\n3. Last")
 middleWindow.close()
 print("PASS: numbered items renumber after middle insertion; caret, styles, save and grouped undo/redo; list and column boundaries")
+
+// Removing list items closes the gap without touching a separate list.
+let deletionEditor = NoteTextView()
+func assertListDeletion(_ source: String, removing removed: String, expected: String,
+                        delete: (NoteTextView) -> Void = { $0.deleteBackward(nil) }) {
+    deletionEditor.string = source
+    deletionEditor.setSelectedRange((source as NSString).range(of: removed))
+    delete(deletionEditor)
+    assert(deletionEditor.string == expected, deletionEditor.string.debugDescription)
+}
+assertListDeletion("1. A\n2. B\n3. C\n4. D", removing: "1. A\n2. B\n", expected: "1. C\n2. D")
+assertListDeletion("1. A\n2. B\n3. C\n\n8. Separate", removing: "2. B\n",
+                   expected: "1. A\n2. C\n\n8. Separate", delete: { $0.deleteForward(nil) })
+assertListDeletion("1. A\n2. B\n3. C", removing: "2. ", expected: "1. A\nB\n2. C", delete: { $0.delete(nil) })
+assertListDeletion("8. A\r\n9. B\r\n10. C\u{000c}1. Other column", removing: "9. B\r\n",
+                   expected: "8. A\r\n9. C\u{000c}1. Other column")
+assertListDeletion("1. A\n2. B\n3. C", removing: "B", expected: "1. A\n2. \n3. C")
+assertBulletReturn("1. A\n2. \n3. C", selection: NSRange(location: 8, length: 0), expected: "1. A\n\n2. C")
+
+let deletionNote = Note()
+Store.shared.notes.append(deletionNote)
+let deletionWindow = NoteWindow(note: deletionNote)
+let savedDeletionEditor = deletionWindow.primaryEditor
+let deletionSource = "8. A\n9. B\n10. C\n11. D"
+let deletionResult = "8. A\n9. C\n10. D"
+savedDeletionEditor.string = deletionSource
+savedDeletionEditor.setSelectedRange(NSRange(location: 5, length: 5))
+savedDeletionEditor.undoManager!.removeAllActions()
+savedDeletionEditor.deleteBackward(nil)
+assert(savedDeletionEditor.string == deletionResult)
+assert(savedDeletionEditor.selectedRange().location == 5)
+savedDeletionEditor.undoManager!.undo()
+assert(savedDeletionEditor.string == deletionSource)
+savedDeletionEditor.undoManager!.redo()
+assert(savedDeletionEditor.string == deletionResult)
+let savedDeletion = Store.shared.notes.first { $0.id == deletionNote.id }!
+assert(NSAttributedString(rtfd: savedDeletion.richText, documentAttributes: nil)?.string == deletionResult)
+deletionWindow.close()
+print("PASS: list renumbering after deletion; first and middle items, marker removal, boundaries, undo/redo and autosave")
