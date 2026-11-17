@@ -50,16 +50,24 @@ Create a note, give it a color, and start writing. Edits save automatically. Clo
 
 ## Screenshots
 
-### Two columns, images, and a color for every idea
+Screenshots from Sticky Notes 1.0.36.
+
+### My Notes in grid view
 
 <p align="center">
-  <img src="docs/images/two-column-note.png" alt="Sticky Notes 1.0.12: a sage note with two text columns, embedded images, and the color picker open" width="588" />
+  <img src="docs/images/my-notes-grid.png" alt="My Notes with five pastel note cards in a grid and a groups sidebar" width="990" />
 </p>
 
-### Your notes, always within reach
+### Two-column editor
 
 <p align="center">
-  <img src="docs/images/my-notes-and-floating-note.png" alt="My Notes library with colorful saved notes and a translucent yellow shopping note with Keep note above enabled" width="767" />
+  <img src="docs/images/two-column-editor.png" alt="A sage note with an English numbered list and a Persian bulleted list in two columns" width="642" />
+</p>
+
+### Settings in dark mode
+
+<p align="center">
+  <img src="docs/images/settings-dark.png" alt="Dark mode settings with controls for color intensity, opacity, and defaults for new notes" width="470" />
 </p>
 
 ## Features
